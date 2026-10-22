@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Mesa de Asamblea ACACIP</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;500;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="estilo.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+</head>
+<body>
+<main class="wrap wide" id="app">
+  <section class="badge">
+    <div class="badge-top"><span class="logo-mark" role="img" aria-label="Logo ACACIP"></span>
+      <div class="tx"><div class="org">ACACIP · MESA</div><h1>Asamblea General<b>Panel de la mesa</b></h1></div></div>
+  </section>
+  <div id="view"></div>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+(function(){
+var view=document.getElementById('view'), PK='asamblea-admin';
+var st={pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:''},editando:null,resetPres:false};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function sget(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}
+function sput(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v);}catch(e){}}
+function toast(t){var el=document.getElementById('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){el.hidden=true;},2600);}
+function api(path,method,body){
+  return fetch('/api/admin/'+path,{method:method||'GET',headers:{'content-type':'application/json','x-admin-password':st.pw},body:body?JSON.stringify(body):undefined})
+  .then(function(r){return r.json().catch(function(){return {ok:false,mensaje:'Respuesta inválida del servidor.'};}).then(function(j){j._status=r.status;if(r.status===401&&path!=='login'){st.pw='';sput(PK,null);render();}return j;});},function(){return {ok:false,mensaje:'Sin conexión.'};});
+}
+var NOMBRES={positivo:'Positivo',negativo:'Negativo',abstencion:'Abstención'};
+function fmtFecha(iso){if(!iso)return '—';var d=new Date(iso);return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});}
+
+/* ---------- Acceso ---------- */
+function loginView(){
+  return '<form class="card" id="login" style="max-width:420px;align-self:center;width:100%"><h3>Ingreso de la mesa</h3>'+
+  '<div class="field"><label for="pw">Contraseña</label><input type="password" id="pw" autocomplete="current-password" required></div>'+
+  (st.loginMsg?'<div class="status no" role="alert"><p>'+esc(st.loginMsg)+'</p></div>':'')+
+  '<button class="btn primary block" type="submit">Entrar</button></form>';
+}
+
+/* ---------- Resumen y consignas ---------- */
+function cargar(){return api('resumen').then(function(r){if(r.ok){st.resumen=r;render();}});}
+function statsHtml(){
+  var r=st.resumen;if(!r)return '<p class="muted">Cargando…</p>';
+  return '<div class="stats"><div class="stat"><span class="label">Socios presentes</span><b>'+r.presentes+'</b><span class="hint">ingresaron con su DNI</span></div>'+
+  '<div class="stat"><span class="label">Socios activos</span><b>'+r.padron.activos+'</b><span class="hint">de '+r.padron.total+' en el padrón</span></div>'+
+  '<div class="stat"><span class="label">Consignas</span><b>'+r.mociones.length+'</b><span class="hint">'+r.mociones.filter(function(m){return m.estado==='abierta';}).length+' abiertas</span></div></div>';
+}
+function barras(res){
+  var t=res.total||0;
+  return '<div class="bars">'+['positivo','negativo','abstencion'].map(function(k){var n=res[k]||0,p=t?Math.round(n*1000/t)/10:0;
+    return '<div class="bar '+k+'"><span>'+NOMBRES[k]+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+'</div>';
+}
+function mocionAdmin(m,i,n){
+  var pres=st.resumen.presentes;
+  var h='<article class="card"><div class="spread"><span class="label">Consigna '+(i+1)+'</span><span class="pill '+m.estado+'">'+({borrador:'Borrador',abierta:'Votación abierta',cerrada:'Cerrada'})[m.estado]+'</span></div>';
+  if(st.editando===m.id){
+    h+='<div class="field"><label for="et-'+m.id+'">Consigna</label><input id="et-'+m.id+'" value="'+esc(m.titulo)+'"></div><div class="field"><label for="ed-'+m.id+'">Detalle (opcional)</label><textarea id="ed-'+m.id+'">'+esc(m.detalle)+'</textarea></div>'+
+    '<div class="row"><button class="btn primary small" data-guardar="'+m.id+'">Guardar</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div>';
+  } else {
+    h+='<h3>'+esc(m.titulo)+'</h3>'+(m.detalle?'<p class="muted" style="white-space:pre-line">'+esc(m.detalle)+'</p>':'');
+  }
+  if(m.estado!=='borrador'){
+    h+=barras(m.resultados)+'<p class="hint">'+m.resultados.total+' votos emitidos · '+m.votantes+' socios votaron'+(pres?' · '+Math.round(m.votantes*100/pres)+'% de los presentes':'')+'</p>';
+  }
+  h+='<div class="row">';
+  if(m.estado==='borrador')h+='<button class="btn primary small" data-estado="abierta" data-id="'+m.id+'">Abrir votación</button>';
+  if(m.estado==='abierta')h+='<button class="btn primary small" data-estado="cerrada" data-id="'+m.id+'">Cerrar votación</button>';
+  if(m.estado==='cerrada'){
+    h+='<button class="btn ghost small" data-publicar="'+(m.publicar?'0':'1')+'" data-id="'+m.id+'">'+(m.publicar?'Ocultar resultados a los socios':'Mostrar resultados a los socios')+'</button>';
+    h+='<button class="btn ghost small" data-estado="abierta" data-id="'+m.id+'">Reabrir</button>';
+  }
+  if(m.estado==='borrador'&&st.editando!==m.id)h+='<button class="btn ghost small" data-editar="'+m.id+'">Editar</button>';
+  if(i>0)h+='<button class="btn ghost small" data-mover="-1" data-id="'+m.id+'" aria-label="Subir">↑</button>';
+  if(i<n-1)h+='<button class="btn ghost small" data-mover="1" data-id="'+m.id+'" aria-label="Bajar">↓</button>';
+  h+='<button class="btn danger small" data-borrar="'+m.id+'">Eliminar</button></div>';
+  if(st.borrar===m.id)h+='<div class="status no"><p>Se elimina la consigna y todos sus votos. No se puede deshacer.</p><div class="row"><button class="btn danger small" data-borrarok="'+m.id+'">Sí, eliminar</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div></div>';
+  return h+'</article>';
+}
+function mocionesView(){
+  var r=st.resumen;
+  var h='<form class="card" id="nueva"><h3>Nueva consigna</h3><div class="field"><label for="n-titulo">Consigna a votar</label><input id="n-titulo" placeholder="Ej.: Aprobación de la memoria y balance 2025-2026" value="'+esc(st.nueva.titulo)+'"></div>'+
+  '<div class="field"><label for="n-detalle">Detalle (opcional)</label><textarea id="n-detalle" placeholder="Texto que van a leer los socios antes de votar">'+esc(st.nueva.detalle)+'</textarea></div>'+
+  '<div class="row"><button class="btn primary" type="submit">Agregar consigna</button><span class="hint">Se crea como borrador: los socios no la ven hasta que abras la votación.</span></div></form>';
+  if(r&&r.mociones.length)h+=r.mociones.map(function(m,i){return mocionAdmin(m,i,r.mociones.length);}).join('');
+  else if(r)h+='<p class="muted">Todavía no hay consignas cargadas.</p>';
+  if(r&&r.mociones.some(function(m){return m.estado!=='borrador';}))h+='<button class="btn ghost" data-csv="1" style="align-self:flex-start">Descargar resultados (CSV)</button>';
+  return h;
+}
+
+/* ---------- Padrón ---------- */
+function normHead(s){return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').trim();}
+function esActivo(v){var s=normHead(v);if(s==='')return true;return /^(si|s|activo|activa|habilitado|habilitada|1|true|x|al dia|ok)$/.test(s);}
+function interpretar(rows){
+  rows=rows.filter(function(r){return r&&r.some(function(c){return String(c==null?'':c).trim()!=='';});});
+  if(!rows.length)return {error:'El archivo no tiene filas.'};
+  var head=rows[0].map(normHead), iD=-1,iN=-1,iA=-1,iAp=-1;
+  head.forEach(function(h,i){if(iD<0&&/(dni|documento|doc)/.test(h))iD=i;else if(iA<0&&/(activo|estado|habilitad|condicion|situacion|vota)/.test(h))iA=i;else if(iAp<0&&/apellido/.test(h))iAp=i;else if(iN<0&&/(nombre|socio)/.test(h))iN=i;});
+  var datos=rows;
+  if(iD<0){ /* sin encabezado: DNI, nombre, activo */
+    iD=0;iN=1;iA=rows[0].length>2?2:-1;
+  } else datos=rows.slice(1);
+  var socios=[],invalidos=[],vistos={},dup=0;
+  datos.forEach(function(r,ix){
+    var d=String(r[iD]==null?'':r[iD]).replace(/\D/g,'').replace(/^0+/,'');
+    var nom=[iAp>=0?r[iAp]:'',iN>=0?r[iN]:''].map(function(x){return String(x==null?'':x).trim();}).filter(Boolean).join(', ');
+    if(!/^\d{6,9}$/.test(d)){invalidos.push((ix+2)+': '+String(r[iD]||'(vacío)'));return;}
+    if(vistos[d]){dup++;}
+    vistos[d]=true;
+    socios.push({dni:d,nombre:nom,activo:iA>=0?esActivo(r[iA]):true});
+  });
+  var mapa={};socios.forEach(function(s){mapa[s.dni]=s;});socios=Object.keys(mapa).map(function(k){return mapa[k];});
+  return {socios:socios,invalidos:invalidos,dup:dup,conEstado:iA>=0};
+}
+function leerArchivo(f){
+  st.preview=null;st.previewErr='';
+  var rd=new FileReader();
+  if(/\.(csv|txt)$/i.test(f.name)){
+    rd.onload=function(){var txt=String(rd.result);var sep=(txt.split('\n')[0].match(/;/g)||[]).length>=(txt.split('\n')[0].match(/,/g)||[]).length?';':',';
+      var rows=txt.split(/\r?\n/).map(function(l){return l.split(sep).map(function(c){return c.replace(/^"|"$/g,'');});});
+      var r=interpretar(rows);if(r.error)st.previewErr=r.error;else st.preview=r;render();};
+    rd.readAsText(f,'utf-8');
+  } else {
+    if(!window.XLSX){st.previewErr='No se pudo cargar el lector de Excel. Guardá el archivo como CSV y subilo de nuevo.';render();return;}
+    rd.onload=function(){try{var wb=XLSX.read(rd.result,{type:'array'});var ws=wb.Sheets[wb.SheetNames[0]];var rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+      var r=interpretar(rows);if(r.error)st.previewErr=r.error;else st.preview=r;}catch(e){st.previewErr='No se pudo leer el archivo. Probá guardarlo como .xlsx o .csv.';}render();};
+    rd.readAsArrayBuffer(f);
+  }
+}
+function padronView(){
+  var r=st.resumen, p=st.preview;
+  var h='<div class="card"><h3>Padrón actual</h3>'+(r?'<p>'+r.padron.total+' socios cargados · <b>'+r.padron.activos+' activos</b> · '+(r.padron.total-r.padron.activos)+' no activos</p><p class="hint">Última carga: '+fmtFecha(r.padron.actualizado)+'</p>':'<p class="muted">Cargando…</p>')+
+  '<form class="row" id="buscar"><div class="field" style="flex:1;min-width:200px"><label for="q">Buscar socio por DNI o apellido</label><input id="q" value="'+esc(st.buscar.q)+'"></div><button class="btn ghost" type="submit" style="align-self:flex-end">Buscar</button></form>';
+  if(st.buscar.res){h+=st.buscar.res.length?'<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th><th>Ingresó</th></tr></thead><tbody>'+st.buscar.res.map(function(x){return '<tr><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+'</td><td>'+(x.activo?'Activo':'No activo')+'</td><td>'+(x.presente?'Sí':'No')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Sin resultados.</p>';}
+  h+='</div>';
+  h+='<div class="card"><h3>Cargar padrón</h3><p class="muted">Subí un Excel o CSV con una columna <b>DNI</b>, una de <b>Nombre</b> (o Apellido y Nombre) y una de <b>Estado</b> o <b>Activo</b>. Cuentan como activos: “Sí”, “Activo”, “Habilitado”, “1” o “X”. Si no hay columna de estado, todos se cargan como activos.</p>'+
+  '<div class="field"><label for="archivo">Archivo (.xlsx, .xls o .csv)</label><input type="file" id="archivo" accept=".xlsx,.xls,.csv,.txt"></div>';
+  if(st.previewErr)h+='<div class="status no" role="alert"><p>'+esc(st.previewErr)+'</p></div>';
+  if(p){
+    var act=p.socios.filter(function(s){return s.activo;}).length;
+    h+='<div class="status info"><strong>'+p.socios.length+' socios leídos</strong><p>'+act+' activos · '+(p.socios.length-act)+' no activos'+(p.conEstado?'':' (sin columna de estado: todos activos)')+(p.dup?' · '+p.dup+' DNI repetidos (se toma la última fila)':'')+'</p>'+
+    (p.invalidos.length?'<p>Se descartan '+p.invalidos.length+' filas con DNI inválido: '+esc(p.invalidos.slice(0,6).join(' · '))+(p.invalidos.length>6?'…':'')+'</p>':'')+'</div>'+
+    '<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th></tr></thead><tbody>'+p.socios.slice(0,8).map(function(s){return '<tr><td class="mono">'+esc(s.dni)+'</td><td>'+esc(s.nombre)+'</td><td>'+(s.activo?'Activo':'No activo')+'</td></tr>';}).join('')+'</tbody></table></div>'+
+    (p.socios.length>8?'<p class="hint">y '+(p.socios.length-8)+' más.</p>':'')+
+    '<div class="row"><button class="btn primary" data-guardarpadron="1">Reemplazar padrón con estos '+p.socios.length+' socios</button><button class="btn ghost" data-descartar="1">Descartar</button></div>';
+  }
+  h+='</div>';
+  h+='<div class="card"><h3>Presentes</h3><p class="muted">Se cuenta un socio presente cuando ingresa con su DNI. Si hiciste pruebas antes de la asamblea, reiniciá el contador.</p>'+
+  (st.resetPres?'<div class="row"><button class="btn danger small" data-resetok="1">Sí, poner presentes en cero</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div>':'<button class="btn ghost small" data-reset="1" style="align-self:flex-start">Reiniciar presentes</button>')+'</div>';
+  return h;
+}
+
+function render(){
+  var a=document.activeElement, fid=a&&a.id, pos=a&&a.selectionStart;
+  if(!st.pw){view.innerHTML=loginView();return;}
+  view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+
+    '<div class="spread"><div class="tabs" role="tablist"><button class="tab" role="tab" data-tab="mociones" aria-selected="'+(st.tab==='mociones')+'">Consignas y votación</button><button class="tab" role="tab" data-tab="padron" aria-selected="'+(st.tab==='padron')+'">Padrón</button></div>'+
+    '<div class="row"><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
+    statsHtml()+(st.tab==='mociones'?mocionesView():padronView())+'</div>';
+  if(fid){var el=document.getElementById(fid);if(el){el.focus();try{if(pos!=null)el.setSelectionRange(pos,pos);}catch(e){}}}
+}
+
+function csv(){
+  var r=st.resumen, filas=[['Consigna','Estado','Positivo','Negativo','Abstención','Total votos','Socios que votaron','Presentes']];
+  r.mociones.forEach(function(m){filas.push([m.titulo,m.estado,m.resultados.positivo,m.resultados.negativo,m.resultados.abstencion,m.resultados.total,m.votantes,r.presentes]);});
+  var txt='﻿'+filas.map(function(f){return f.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
+  var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/csv'}));a.download='resultados-asamblea-acacip.csv';document.body.appendChild(a);a.click();a.remove();
+}
+function accion(p){return p.then(function(r){if(!r.ok)toast(r.mensaje||'No se pudo completar.');return cargar().then(function(){return r;});});}
+
+view.addEventListener('submit',function(e){
+  e.preventDefault();
+  if(e.target.id==='login'){var pw=document.getElementById('pw').value;st.pw=pw;
+    api('login','POST').then(function(r){if(r.ok){sput(PK,pw);st.loginMsg='';render();cargar();}else{st.pw='';st.loginMsg=r._status===401?'Contraseña incorrecta.':(r.mensaje||'No se pudo ingresar.');render();}});return;}
+  if(e.target.id==='nueva'){var t=st.nueva.titulo.trim();if(!t){toast('Escribí la consigna');return;}
+    accion(api('mociones','POST',{titulo:t,detalle:st.nueva.detalle})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:''};render();toast('Consigna agregada');}});return;}
+  if(e.target.id==='buscar'){api('padron/buscar?q='+encodeURIComponent(st.buscar.q)).then(function(r){st.buscar.res=r.ok?r.resultados:[];render();});}
+});
+view.addEventListener('input',function(e){
+  if(e.target.id==='n-titulo')st.nueva.titulo=e.target.value;
+  if(e.target.id==='n-detalle')st.nueva.detalle=e.target.value;
+  if(e.target.id==='q')st.buscar.q=e.target.value;
+});
+view.addEventListener('change',function(e){if(e.target.id==='archivo'&&e.target.files[0])leerArchivo(e.target.files[0]);});
+view.addEventListener('click',function(e){
+  var t=e.target.closest('button');if(!t)return;var d=t.dataset;
+  if(d.tab){st.tab=d.tab;render();return;}
+  if(d.logout){st.pw='';sput(PK,null);st.resumen=null;render();return;}
+  if(d.estado){accion(api('mociones/'+d.id,'PATCH',{estado:d.estado})).then(function(r){if(r.ok)toast(d.estado==='abierta'?'Votación abierta':'Votación cerrada');});return;}
+  if(d.publicar){accion(api('mociones/'+d.id,'PATCH',{publicar:d.publicar==='1'}));return;}
+  if(d.mover){accion(api('mociones/'+d.id,'PATCH',{mover:+d.mover}));return;}
+  if(d.editar){st.editando=d.editar;render();return;}
+  if(d.guardar){var id=d.guardar;accion(api('mociones/'+id,'PATCH',{titulo:document.getElementById('et-'+id).value,detalle:document.getElementById('ed-'+id).value})).then(function(){st.editando=null;render();});return;}
+  if(d.cancelar){st.editando=null;st.borrar=null;st.resetPres=false;render();return;}
+  if(d.borrar){st.borrar=d.borrar;render();return;}
+  if(d.borrarok){st.borrar=null;accion(api('mociones/'+d.borrarok,'DELETE')).then(function(r){if(r.ok)toast('Consigna eliminada');});return;}
+  if(d.csv){csv();return;}
+  if(d.descartar){st.preview=null;render();return;}
+  if(d.guardarpadron){var p=st.preview;t.disabled=true;accion(api('padron','PUT',{socios:p.socios})).then(function(r){if(r.ok){st.preview=null;render();toast('Padrón guardado: '+r.total+' socios');}});return;}
+  if(d.reset){st.resetPres=true;render();return;}
+  if(d.resetok){st.resetPres=false;accion(api('presentes','DELETE')).then(function(r){if(r.ok)toast('Presentes en cero');});return;}
+});
+
+st.pw=sget(PK)||'';
+render();
+if(st.pw)cargar();
+setInterval(function(){if(st.pw&&!document.hidden&&!st.editando)cargar();},3000);
+})();
+</script>
+</body>
+</html>

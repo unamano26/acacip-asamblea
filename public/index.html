@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Asamblea ACACIP</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;500;700&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+<main class="wrap" id="app">
+  <section class="badge" aria-label="Asamblea">
+    <div class="badge-top"><span class="logo-mark" role="img" aria-label="Logo ACACIP"></span>
+      <div class="tx"><div class="org">ACACIP</div><h1>Asamblea General<b>de Socios</b></h1></div></div>
+    <div class="badge-body" id="badge-body"><p class="muted">59° Congreso Argentino de Cirugía Pediátrica · Santa Fe</p></div>
+  </section>
+  <div id="view"><p class="muted">Cargando…</p></div>
+  <footer>Ante cualquier problema, acercate a la mesa de acreditación.</footer>
+</main>
+<div class="toast" id="toast" role="status" hidden></div>
+<script>
+(function(){
+var KEY='asamblea-dni', view=document.getElementById('view'), badge=document.getElementById('badge-body');
+var st={dni:'',nombre:'',mociones:[],votados:{},sel:{},confirm:null,enviando:false,error:'',login:{msg:null},cargando:false};
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function get(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+function put(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
+function toast(t){var el=document.getElementById('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){el.hidden=true;},2600);}
+function api(path,opts){return fetch('/api/'+path,opts).then(function(r){return r.json().catch(function(){return {ok:false,codigo:'red',mensaje:'Respuesta inválida del servidor.'};}).then(function(j){j._status=r.status;return j;});},function(){return {ok:false,codigo:'red',mensaje:'Sin conexión. Revisá el wifi o los datos e intentá de nuevo.'};});}
+var NOMBRES={positivo:'Positivo',negativo:'Negativo',abstencion:'Abstención'}, LETRA={positivo:'+',negativo:'–',abstencion:'='};
+function fmtDni(d){return String(d).replace(/\B(?=(\d{3})+(?!\d))/g,'.');}
+
+/* ---------- Ingreso ---------- */
+function loginView(){
+  var m=st.login.msg;
+  return '<form class="card" id="login" novalidate><h3>Validá tu condición de socio</h3>'+
+    '<div class="field"><label for="dni">Número de DNI</label><input id="dni" class="dni" inputmode="numeric" autocomplete="off" pattern="[0-9.]*" maxlength="11" placeholder="12345678" value="'+esc(st.login.val||'')+'" required></div>'+
+    '<button class="btn primary block" type="submit"'+(st.cargando?' disabled':'')+'>'+(st.cargando?'Verificando…':'Ingresar')+'</button>'+
+    '<p class="hint">Solo números, sin puntos. Tu DNI se usa para verificar que estés en el padrón. El voto es secreto: nadie puede ver qué votaste.</p></form>'+
+    (m?'<div class="status '+m.tipo+'" role="alert"><strong>'+esc(m.titulo)+'</strong><p>'+esc(m.texto)+'</p></div>':'');
+}
+function ingresar(dni){
+  st.cargando=true;st.login.val=dni;render();
+  api('ingresar',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({dni:dni})}).then(function(r){
+    st.cargando=false;
+    if(r.ok){st.dni=dni.replace(/\D/g,'');st.nombre=r.nombre;put(KEY,st.dni);st.login={msg:null};cargarEstado();return;}
+    if(r.codigo==='inactivo')st.login.msg={tipo:'no',titulo:'No podés votar',texto:(r.nombre?r.nombre+': f':'F')+'igurás en el padrón, pero no como socio activo. Si creés que es un error, acercate a la mesa de acreditación.'};
+    else if(r.codigo==='no_encontrado')st.login.msg={tipo:'no',titulo:'DNI no encontrado',texto:'El DNI '+fmtDni(dni.replace(/\D/g,''))+' no figura en el padrón de socios. Revisá el número o acercate a la mesa de acreditación.'};
+    else st.login.msg={tipo:'no',titulo:'No pudimos verificar',texto:r.mensaje||'Probá de nuevo.'};
+    render();
+  });
+}
+
+/* ---------- Votación ---------- */
+function cargarEstado(){
+  return api('estado?dni='+encodeURIComponent(st.dni)).then(function(r){
+    if(!r.ok){
+      if(r.codigo==='no_encontrado'||r.codigo==='inactivo'||r.codigo==='dni_invalido'){salir();st.login.msg={tipo:'no',titulo:'No podés votar',texto:r.mensaje};render();return;}
+      st.error=r.mensaje;render();return;
+    }
+    st.error='';st.nombre=r.nombre;st.mociones=r.mociones;
+    r.mociones.forEach(function(m){if(m.yaVoto)st.votados[m.id]=true;});
+    render();
+  });
+}
+function refrescar(){
+  if(!st.dni||document.hidden)return;
+  api('mociones').then(function(r){
+    if(!r.ok){return;}
+    var antes=JSON.stringify(st.mociones.map(function(m){return [m.id,m.estado,!!m.resultados];}));
+    st.mociones=r.mociones;
+    var ahora=JSON.stringify(st.mociones.map(function(m){return [m.id,m.estado,!!m.resultados];}));
+    if(antes!==ahora&&!st.confirm)render();
+    else if(antes!==ahora)renderSoft();
+  });
+}
+function renderSoft(){/* mantiene la confirmación abierta; solo actualiza cuando se cierre */}
+function votar(id,op){
+  st.enviando=true;render();
+  api('votar',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({dni:st.dni,mocion:id,opcion:op})}).then(function(r){
+    st.enviando=false;
+    if(r.ok){st.votados[id]=true;st.confirm=null;delete st.sel[id];toast('Voto registrado');}
+    else if(r.codigo==='ya_voto'){st.votados[id]=true;st.confirm=null;toast('Ya habías votado esta consigna');}
+    else if(r.codigo==='cerrada'){st.confirm=null;toast('La votación de esta consigna ya se cerró');refrescar();}
+    else toast(r.mensaje||'No se pudo registrar el voto. Probá de nuevo.');
+    render();
+  });
+}
+function resultadosHtml(r){
+  var t=r.total||0;
+  return '<div class="bars">'+['positivo','negativo','abstencion'].map(function(k){var n=r[k]||0,p=t?Math.round(n*100/t):0;
+    return '<div class="bar '+k+'"><span>'+NOMBRES[k]+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+
+    '</div><p class="hint">'+t+' votos emitidos</p>';
+}
+function mocionHtml(m,i){
+  var votado=!!st.votados[m.id], sel=st.sel[m.id];
+  var pill=m.estado==='abierta'?(votado?'<span class="pill votado">Votaste</span>':'<span class="pill abierta">Votación abierta</span>'):'<span class="pill cerrada">Cerrada</span>';
+  var h='<article class="card" id="m-'+esc(m.id)+'"><div class="spread"><span class="label">Consigna '+(i+1)+'</span>'+pill+'</div><h3>'+esc(m.titulo)+'</h3>'+(m.detalle?'<p class="muted" style="white-space:pre-line">'+esc(m.detalle)+'</p>':'');
+  if(m.estado==='abierta'&&!votado){
+    if(st.confirm&&st.confirm.id===m.id){
+      h+='<div class="confirm"><p>Vas a votar <b>'+NOMBRES[st.confirm.op].toUpperCase()+'</b>. Una vez confirmado no se puede cambiar.</p><div class="row"><button class="btn primary" data-ok="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>'+(st.enviando?'Enviando…':'Confirmar voto')+'</button><button class="btn ghost" data-back="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>Cambiar</button></div></div>';
+    } else {
+      h+='<div class="choices">'+['positivo','negativo','abstencion'].map(function(k){return '<button class="choice '+k+(sel===k?' sel':'')+'" data-m="'+esc(m.id)+'" data-op="'+k+'"><span class="dot">'+LETRA[k]+'</span>'+NOMBRES[k]+'</button>';}).join('')+'</div>';
+    }
+  } else if(m.estado==='abierta'&&votado){
+    h+='<p class="muted">Tu voto quedó registrado. Los resultados se muestran cuando se cierre la votación.</p>';
+  } else if(m.resultados){
+    h+=resultadosHtml(m.resultados);
+  } else {
+    h+='<p class="muted">Votación cerrada. Los resultados se informan en el salón.</p>';
+  }
+  return h+'</article>';
+}
+function votacionView(){
+  var abiertas=st.mociones.filter(function(m){return m.estado==='abierta';});
+  var h='<div class="status ok"><strong>Podés votar</strong><p>'+esc(st.nombre)+' · DNI <span class="mono">'+fmtDni(st.dni)+'</span></p></div>';
+  if(st.error)h+='<div class="status no" role="alert"><p>'+esc(st.error)+'</p></div>';
+  if(!st.mociones.length)h+='<div class="card"><h3>Todavía no hay consignas</h3><p class="muted">Cuando la mesa abra una votación, va a aparecer acá. No hace falta recargar la página.</p></div>';
+  else if(!abiertas.length)h+='<div class="status info"><p>No hay votaciones abiertas en este momento. Esta pantalla se actualiza sola.</p></div>';
+  var orden=st.mociones.map(function(m,i){return {m:m,i:i};});
+  orden.sort(function(a,b){function w(x){return x.m.estado==='abierta'?(st.votados[x.m.id]?1:0):2;}return w(a)-w(b)||a.i-b.i;});
+  h+=orden.map(function(x){return mocionHtml(x.m,x.i);}).join('');
+  h+='<button class="btn ghost small" data-salir="1" style="align-self:center">Salir / ingresar con otro DNI</button>';
+  return h;
+}
+function salir(){st.dni='';st.nombre='';st.votados={};st.sel={};st.confirm=null;put(KEY,null);}
+function render(){
+  var focus=document.activeElement&&document.activeElement.id;
+  view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+(st.dni?votacionView():loginView())+'</div>';
+  if(focus){var el=document.getElementById(focus);if(el){el.focus();}}
+}
+
+view.addEventListener('submit',function(e){
+  if(e.target.id!=='login')return;e.preventDefault();
+  var v=(document.getElementById('dni').value||'').replace(/\D/g,'');
+  if(v.length<6){st.login.val=v;st.login.msg={tipo:'no',titulo:'Revisá el número',texto:'El DNI debe tener entre 6 y 9 números.'};render();return;}
+  ingresar(v);
+});
+view.addEventListener('click',function(e){
+  var t=e.target.closest('[data-m],[data-ok],[data-back],[data-salir]');if(!t)return;
+  if(t.dataset.salir){salir();render();return;}
+  if(t.dataset.m){st.sel[t.dataset.m]=t.dataset.op;st.confirm={id:t.dataset.m,op:t.dataset.op};render();return;}
+  if(t.dataset.back){st.confirm=null;render();return;}
+  if(t.dataset.ok&&st.confirm&&!st.enviando){votar(st.confirm.id,st.confirm.op);}
+});
+document.addEventListener('visibilitychange',function(){if(!document.hidden&&st.dni)cargarEstado();});
+
+var guardado=get(KEY);
+if(guardado){st.dni=guardado;cargarEstado();}else render();
+setInterval(refrescar,5000);
+})();
+</script>
+</body>
+</html>
