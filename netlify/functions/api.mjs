@@ -47,7 +47,8 @@ async function leerMociones(s) {
 async function guardarMociones(s, lista, etag) {
   const opts = etag ? { onlyIfMatch: etag } : { onlyIfNew: true };
   const r = await s.setJSON("mociones", lista, opts);
-  return r.modified !== false;
+  // Algunas versiones de @netlify/blobs no devuelven resultado: se toma como escrito.
+  return !r || r.modified !== false;
 }
 async function contar(s, prefix) {
   const { blobs } = await s.list({ prefix });
@@ -122,8 +123,10 @@ async function votar(req, s) {
   if (m.estado !== "abierta") return err("cerrada", "La votación de esta consigna no está abierta.", 409);
   if (!opcionesDe(m).some((o) => o.id === opcion)) return err("opcion_invalida", "Esa opción no corresponde a esta consigna.");
   await s.set(`presentes/${v.dni}`, "1", { onlyIfNew: true });
-  const marca = await s.set(`voto-dni/${m.id}/${v.dni}`, "1", { onlyIfNew: true });
-  if (marca.modified === false) return err("ya_voto", "Ya registraste tu voto en esta consigna.", 409);
+  const claveVoto = `voto-dni/${m.id}/${v.dni}`;
+  if ((await s.getMetadata(claveVoto)) !== null) return err("ya_voto", "Ya registraste tu voto en esta consigna.", 409);
+  const marca = await s.set(claveVoto, "1", { onlyIfNew: true });
+  if (marca && marca.modified === false) return err("ya_voto", "Ya registraste tu voto en esta consigna.", 409);
   try {
     await s.set(`boletas/${m.id}/${opcion}/${rid()}`, "1");
   } catch (e) {
