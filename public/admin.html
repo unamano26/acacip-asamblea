@@ -20,6 +20,7 @@
   <div id="view"></div>
 </main>
 <div class="toast" id="toast" role="status" hidden></div>
+<input type="file" id="archivo" accept=".xlsx,.xls,.csv,.txt,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
 <script>
 (function(){
 var view=document.getElementById('view'), PK='asamblea-admin';
@@ -139,7 +140,7 @@ function padronView(){
   if(st.buscar.res){h+=st.buscar.res.length?'<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th><th>Ingresó</th></tr></thead><tbody>'+st.buscar.res.map(function(x){return '<tr><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+'</td><td>'+(x.activo?'Activo':'No activo')+'</td><td>'+(x.presente?'Sí':'No')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Sin resultados.</p>';}
   h+='</div>';
   h+='<div class="card"><h3>Cargar padrón</h3><p class="muted">Subí un Excel o CSV con una columna <b>DNI</b>, una de <b>Nombre</b> (o Apellido y Nombre) y una de <b>Estado</b> o <b>Activo</b>. Cuentan como activos: “Sí”, “Activo”, “Habilitado”, “1” o “X”. Si no hay columna de estado, todos se cargan como activos.</p>'+
-  '<div class="field"><label for="archivo">Archivo (.xlsx, .xls o .csv)</label><input type="file" id="archivo" accept=".xlsx,.xls,.csv,.txt"></div>';
+  '<div class="row"><button class="btn primary" data-elegir="1">Elegir archivo Excel o CSV</button><span class="hint">'+esc(st.archivoNombre||'Ningún archivo elegido')+'</span></div>';
   if(st.previewErr)h+='<div class="status no" role="alert"><p>'+esc(st.previewErr)+'</p></div>';
   if(p){
     var act=p.socios.filter(function(s){return s.activo;}).length;
@@ -186,10 +187,11 @@ view.addEventListener('input',function(e){
   if(e.target.id==='n-detalle')st.nueva.detalle=e.target.value;
   if(e.target.id==='q')st.buscar.q=e.target.value;
 });
-view.addEventListener('change',function(e){if(e.target.id==='archivo'&&e.target.files[0])leerArchivo(e.target.files[0]);});
+document.getElementById('archivo').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;st.archivoNombre=f.name;leerArchivo(f);e.target.value='';});
 view.addEventListener('click',function(e){
   var t=e.target.closest('button');if(!t)return;var d=t.dataset;
   if(d.tab){st.tab=d.tab;render();return;}
+  if(d.elegir){document.getElementById('archivo').click();return;}
   if(d.logout){st.pw='';sput(PK,null);st.resumen=null;render();return;}
   if(d.estado){accion(api('mociones/'+d.id,'PATCH',{estado:d.estado})).then(function(r){if(r.ok)toast(d.estado==='abierta'?'Votación abierta':'Votación cerrada');});return;}
   if(d.publicar){accion(api('mociones/'+d.id,'PATCH',{publicar:d.publicar==='1'}));return;}
@@ -209,7 +211,7 @@ view.addEventListener('click',function(e){
 st.pw=sget(PK)||'';
 render();
 if(st.pw)cargar();
-setInterval(function(){if(st.pw&&!document.hidden&&!st.editando)cargar();},3000);
+setInterval(function(){if(st.pw&&!document.hidden&&!st.editando&&st.tab!=='padron')cargar();},3000);
 })();
 </script>
 </body>
