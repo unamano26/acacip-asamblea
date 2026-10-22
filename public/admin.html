@@ -24,7 +24,7 @@
 <script>
 (function(){
 var view=document.getElementById('view'), PK='asamblea-admin';
-var st={pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:''},editando:null,resetPres:false};
+var st={pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true},editando:null,resetPres:false};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function sget(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}
 function sput(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v);}catch(e){}}
@@ -52,28 +52,32 @@ function statsHtml(){
   '<div class="stat"><span class="label">Socios activos</span><b>'+r.padron.activos+'</b><span class="hint">de '+r.padron.total+' en el padrón</span></div>'+
   '<div class="stat"><span class="label">Consignas</span><b>'+r.mociones.length+'</b><span class="hint">'+r.mociones.filter(function(m){return m.estado==='abierta';}).length+' abiertas</span></div></div>';
 }
-function barras(res){
-  var t=res.total||0;
-  return '<div class="bars">'+['positivo','negativo','abstencion'].map(function(k){var n=res[k]||0,p=t?Math.round(n*1000/t)/10:0;
-    return '<div class="bar '+k+'"><span>'+NOMBRES[k]+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+'</div>';
+function clase(id){return NOMBRES[id]?id:'alt';}
+function barras(m){
+  var res=m.resultados,t=res.total||0;
+  return '<div class="bars">'+m.opciones.map(function(o){var k=o.id,n=res[k]||0,p=t?Math.round(n*1000/t)/10:0;
+    return '<div class="bar '+clase(k)+'"><span>'+esc(o.texto)+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+'</div>';
 }
 function mocionAdmin(m,i,n){
   var pres=st.resumen.presentes;
   var h='<article class="card"><div class="spread"><span class="label">Consigna '+(i+1)+'</span><span class="pill '+m.estado+'">'+({borrador:'Borrador',abierta:'Votación abierta',cerrada:'Cerrada'})[m.estado]+'</span></div>';
   if(st.editando===m.id){
     h+='<div class="field"><label for="et-'+m.id+'">Consigna</label><input id="et-'+m.id+'" value="'+esc(m.titulo)+'"></div><div class="field"><label for="ed-'+m.id+'">Detalle (opcional)</label><textarea id="ed-'+m.id+'">'+esc(m.detalle)+'</textarea></div>'+
+    (m.tipo==='opciones'?'<div class="field"><label for="eo-'+m.id+'">Opciones (una por línea)</label><textarea id="eo-'+m.id+'">'+esc((m.opciones||[]).filter(function(o){return o.id!=='abstencion';}).map(function(o){return o.texto;}).join('\n'))+'</textarea></div>':'')+
     '<div class="row"><button class="btn primary small" data-guardar="'+m.id+'">Guardar</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div>';
   } else {
     h+='<h3>'+esc(m.titulo)+'</h3>'+(m.detalle?'<p class="muted" style="white-space:pre-line">'+esc(m.detalle)+'</p>':'');
   }
+  if(m.estado==='borrador'&&st.editando!==m.id){
+    h+='<div class="row">'+m.opciones.map(function(o,j){return '<span class="pill borrador" style="text-transform:none;letter-spacing:0;font-size:13px">'+(NOMBRES[o.id]?'':String.fromCharCode(65+j)+'. ')+esc(o.texto)+'</span>';}).join('')+'</div>';
+  }
   if(m.estado!=='borrador'){
-    h+=barras(m.resultados)+'<p class="hint">'+m.resultados.total+' votos emitidos · '+m.votantes+' socios votaron'+(pres?' · '+Math.round(m.votantes*100/pres)+'% de los presentes':'')+'</p>';
+    h+=barras(m)+'<p class="hint">'+m.resultados.total+' votos emitidos · '+m.votantes+' socios votaron'+(pres?' · '+Math.round(m.votantes*100/pres)+'% de los presentes':'')+'</p>';
   }
   h+='<div class="row">';
   if(m.estado==='borrador')h+='<button class="btn primary small" data-estado="abierta" data-id="'+m.id+'">Abrir votación</button>';
   if(m.estado==='abierta')h+='<button class="btn primary small" data-estado="cerrada" data-id="'+m.id+'">Cerrar votación</button>';
   if(m.estado==='cerrada'){
-    h+='<button class="btn ghost small" data-publicar="'+(m.publicar?'0':'1')+'" data-id="'+m.id+'">'+(m.publicar?'Ocultar resultados a los socios':'Mostrar resultados a los socios')+'</button>';
     h+='<button class="btn ghost small" data-estado="abierta" data-id="'+m.id+'">Reabrir</button>';
   }
   if(m.estado==='borrador'&&st.editando!==m.id)h+='<button class="btn ghost small" data-editar="'+m.id+'">Editar</button>';
@@ -87,7 +91,12 @@ function mocionesView(){
   var r=st.resumen;
   var h='<form class="card" id="nueva"><h3>Nueva consigna</h3><div class="field"><label for="n-titulo">Consigna a votar</label><input id="n-titulo" placeholder="Ej.: Aprobación de la memoria y balance 2025-2026" value="'+esc(st.nueva.titulo)+'"></div>'+
   '<div class="field"><label for="n-detalle">Detalle (opcional)</label><textarea id="n-detalle" placeholder="Texto que van a leer los socios antes de votar">'+esc(st.nueva.detalle)+'</textarea></div>'+
-  '<div class="row"><button class="btn primary" type="submit">Agregar consigna</button><span class="hint">Se crea como borrador: los socios no la ven hasta que abras la votación.</span></div></form>';
+  '<fieldset class="tipo"><legend class="label" style="margin-bottom:6px">Tipo de votación</legend><div class="row">'+
+  '<label class="btn ghost small"><input type="radio" name="n-tipo" value="sino"'+(st.nueva.tipo==='sino'?' checked':'')+'> Positivo / Negativo / Abstención</label>'+
+  '<label class="btn ghost small"><input type="radio" name="n-tipo" value="opciones"'+(st.nueva.tipo==='opciones'?' checked':'')+'> Elegir entre opciones</label></div></fieldset>'+
+  (st.nueva.tipo==='opciones'?'<div class="field"><span class="label">Opciones (cada socio elige una)</span>'+st.nueva.opciones.map(function(o,j){return '<div class="row"><input id="n-op-'+j+'" aria-label="Opción '+String.fromCharCode(65+j)+'" placeholder="Opción '+String.fromCharCode(65+j)+(j===0?' · ej.: Córdoba':'')+'" value="'+esc(o)+'" style="flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 12px">'+(st.nueva.opciones.length>2?'<button type="button" class="btn ghost small" data-quitarop="'+j+'" aria-label="Quitar opción">Quitar</button>':'')+'</div>';}).join('')+
+    '<div class="row">'+(st.nueva.opciones.length<8?'<button type="button" class="btn ghost small" data-agregarop="1">+ Agregar opción</button>':'')+'<label class="hint check"><input type="checkbox" id="n-abs"'+(st.nueva.abstencion?' checked':'')+'> Incluir “Abstención”</label></div></div>':'')+
+  '<div class="row"><button class="btn primary" type="submit">Agregar consigna</button><span class="hint">Se crea como borrador. Los socios la ven recién cuando abrís la votación, y deja de aparecerles al cerrarla.</span></div></form>';
   if(r&&r.mociones.length)h+=r.mociones.map(function(m,i){return mocionAdmin(m,i,r.mociones.length);}).join('');
   else if(r)h+='<p class="muted">Todavía no hay consignas cargadas.</p>';
   if(r&&r.mociones.some(function(m){return m.estado!=='borrador';}))h+='<button class="btn ghost" data-csv="1" style="align-self:flex-start">Descargar resultados (CSV)</button>';
@@ -161,14 +170,14 @@ function render(){
   if(!st.pw){view.innerHTML=loginView();return;}
   view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+
     '<div class="spread"><div class="tabs" role="tablist"><button class="tab" role="tab" data-tab="mociones" aria-selected="'+(st.tab==='mociones')+'">Consignas y votación</button><button class="tab" role="tab" data-tab="padron" aria-selected="'+(st.tab==='padron')+'">Padrón</button></div>'+
-    '<div class="row"><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
+    '<div class="row"><a class="btn primary small" href="/pantalla" target="_blank" rel="noopener">Proyectar en pantalla</a><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
     statsHtml()+(st.tab==='mociones'?mocionesView():padronView())+'</div>';
   if(fid){var el=document.getElementById(fid);if(el){el.focus();try{if(pos!=null)el.setSelectionRange(pos,pos);}catch(e){}}}
 }
 
 function csv(){
-  var r=st.resumen, filas=[['Consigna','Estado','Positivo','Negativo','Abstención','Total votos','Socios que votaron','Presentes']];
-  r.mociones.forEach(function(m){filas.push([m.titulo,m.estado,m.resultados.positivo,m.resultados.negativo,m.resultados.abstencion,m.resultados.total,m.votantes,r.presentes]);});
+  var r=st.resumen, filas=[['Consigna','Estado','Opción','Votos','% de votos emitidos','Total votos','Socios que votaron','Presentes']];
+  r.mociones.filter(function(m){return m.estado!=='borrador';}).forEach(function(m){var t=m.resultados.total||0;m.opciones.forEach(function(o){var n=m.resultados[o.id]||0;filas.push([m.titulo,m.estado,o.texto,n,t?(Math.round(n*1000/t)/10+'').replace('.',','):'0',t,m.votantes,r.presentes]);});});
   var txt='﻿'+filas.map(function(f){return f.map(function(c){return '"'+String(c).replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
   var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/csv'}));a.download='resultados-asamblea-acacip.csv';document.body.appendChild(a);a.click();a.remove();
 }
@@ -179,25 +188,34 @@ view.addEventListener('submit',function(e){
   if(e.target.id==='login'){var pw=document.getElementById('pw').value;st.pw=pw;
     api('login','POST').then(function(r){if(r.ok){sput(PK,pw);st.loginMsg='';render();cargar();}else{st.pw='';st.loginMsg=r._status===401?'Contraseña incorrecta.':(r.mensaje||'No se pudo ingresar.');render();}});return;}
   if(e.target.id==='nueva'){var t=st.nueva.titulo.trim();if(!t){toast('Escribí la consigna');return;}
-    accion(api('mociones','POST',{titulo:t,detalle:st.nueva.detalle})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:''};render();toast('Consigna agregada');}});return;}
+    var nv=st.nueva,ops=nv.opciones.map(function(x){return x.trim();}).filter(Boolean);
+    if(nv.tipo==='opciones'&&ops.length<2){toast('Cargá al menos dos opciones');return;}
+    accion(api('mociones','POST',{titulo:t,detalle:nv.detalle,tipo:nv.tipo,opciones:ops,abstencion:nv.abstencion})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true};render();toast('Consigna agregada');}});return;}
   if(e.target.id==='buscar'){api('padron/buscar?q='+encodeURIComponent(st.buscar.q)).then(function(r){st.buscar.res=r.ok?r.resultados:[];render();});}
 });
 view.addEventListener('input',function(e){
   if(e.target.id==='n-titulo')st.nueva.titulo=e.target.value;
   if(e.target.id==='n-detalle')st.nueva.detalle=e.target.value;
+  var mo=e.target.id&&e.target.id.match(/^n-op-(\d+)$/);if(mo)st.nueva.opciones[+mo[1]]=e.target.value;
   if(e.target.id==='q')st.buscar.q=e.target.value;
 });
 document.getElementById('archivo').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;st.archivoNombre=f.name;leerArchivo(f);e.target.value='';});
+view.addEventListener('change',function(e){
+  if(e.target.name==='n-tipo'){st.nueva.tipo=e.target.value;render();}
+  if(e.target.id==='n-abs')st.nueva.abstencion=e.target.checked;
+});
 view.addEventListener('click',function(e){
   var t=e.target.closest('button');if(!t)return;var d=t.dataset;
   if(d.tab){st.tab=d.tab;render();return;}
+  if(d.agregarop){st.nueva.opciones.push('');render();var el=document.getElementById('n-op-'+(st.nueva.opciones.length-1));if(el)el.focus();return;}
+  if(d.quitarop){st.nueva.opciones.splice(+d.quitarop,1);render();return;}
   if(d.elegir){document.getElementById('archivo').click();return;}
   if(d.logout){st.pw='';sput(PK,null);st.resumen=null;render();return;}
   if(d.estado){accion(api('mociones/'+d.id,'PATCH',{estado:d.estado})).then(function(r){if(r.ok)toast(d.estado==='abierta'?'Votación abierta':'Votación cerrada');});return;}
   if(d.publicar){accion(api('mociones/'+d.id,'PATCH',{publicar:d.publicar==='1'}));return;}
   if(d.mover){accion(api('mociones/'+d.id,'PATCH',{mover:+d.mover}));return;}
   if(d.editar){st.editando=d.editar;render();return;}
-  if(d.guardar){var id=d.guardar;accion(api('mociones/'+id,'PATCH',{titulo:document.getElementById('et-'+id).value,detalle:document.getElementById('ed-'+id).value})).then(function(){st.editando=null;render();});return;}
+  if(d.guardar){var id=d.guardar;accion(api('mociones/'+id,'PATCH',(function(){var b={titulo:document.getElementById('et-'+id).value,detalle:document.getElementById('ed-'+id).value};var eo=document.getElementById('eo-'+id);if(eo)b.opciones=eo.value.split('\n').map(function(x){return x.trim();}).filter(Boolean);return b;})())).then(function(){st.editando=null;render();});return;}
   if(d.cancelar){st.editando=null;st.borrar=null;st.resetPres=false;render();return;}
   if(d.borrar){st.borrar=d.borrar;render();return;}
   if(d.borrarok){st.borrar=null;accion(api('mociones/'+d.borrarok,'DELETE')).then(function(r){if(r.ok)toast('Consigna eliminada');});return;}

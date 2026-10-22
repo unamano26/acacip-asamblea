@@ -30,7 +30,11 @@ function get(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function put(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
 function toast(t){var el=document.getElementById('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){el.hidden=true;},2600);}
 function api(path,opts){return fetch('/api/'+path,opts).then(function(r){return r.json().catch(function(){return {ok:false,codigo:'red',mensaje:'Respuesta inválida del servidor.'};}).then(function(j){j._status=r.status;return j;});},function(){return {ok:false,codigo:'red',mensaje:'Sin conexión. Revisá el wifi o los datos e intentá de nuevo.'};});}
-var NOMBRES={positivo:'Positivo',negativo:'Negativo',abstencion:'Abstención'}, LETRA={positivo:'+',negativo:'–',abstencion:'='};
+var SINO=[{id:'positivo',texto:'Positivo'},{id:'negativo',texto:'Negativo'},{id:'abstencion',texto:'Abstención'}], LETRA={positivo:'+',negativo:'–',abstencion:'='};
+function ops(m){return (m.opciones&&m.opciones.length)?m.opciones:SINO;}
+function clase(id){return LETRA[id]?id:'alt';}
+function marca(id,i){return LETRA[id]||String.fromCharCode(65+i);}
+function textoOp(m,id){var o=ops(m).filter(function(x){return x.id===id;})[0];return o?o.texto:id;}
 function fmtDni(d){return String(d).replace(/\B(?=(\d{3})+(?!\d))/g,'.');}
 
 /* ---------- Ingreso ---------- */
@@ -89,26 +93,26 @@ function votar(id,op){
     render();
   });
 }
-function resultadosHtml(r){
-  var t=r.total||0;
-  return '<div class="bars">'+['positivo','negativo','abstencion'].map(function(k){var n=r[k]||0,p=t?Math.round(n*100/t):0;
-    return '<div class="bar '+k+'"><span>'+NOMBRES[k]+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+
+function resultadosHtml(m){
+  var r=m.resultados,t=r.total||0;
+  return '<div class="bars">'+ops(m).map(function(o){var k=o.id,n=r[k]||0,p=t?Math.round(n*100/t):0;
+    return '<div class="bar '+clase(k)+'"><span>'+esc(o.texto)+'</span><span class="track"><span class="fill" style="width:'+p+'%;display:block"></span></span><span class="n">'+n+'</span></div>';}).join('')+
     '</div><p class="hint">'+t+' votos emitidos</p>';
 }
 function mocionHtml(m,i){
   var votado=!!st.votados[m.id], sel=st.sel[m.id];
   var pill=m.estado==='abierta'?(votado?'<span class="pill votado">Votaste</span>':'<span class="pill abierta">Votación abierta</span>'):'<span class="pill cerrada">Cerrada</span>';
-  var h='<article class="card" id="m-'+esc(m.id)+'"><div class="spread"><span class="label">Consigna '+(i+1)+'</span>'+pill+'</div><h3>'+esc(m.titulo)+'</h3>'+(m.detalle?'<p class="muted" style="white-space:pre-line">'+esc(m.detalle)+'</p>':'');
+  var h='<article class="card" id="m-'+esc(m.id)+'"><div class="spread"><span class="label">Consigna '+(m.numero||i+1)+'</span>'+pill+'</div><h3>'+esc(m.titulo)+'</h3>'+(m.detalle?'<p class="muted" style="white-space:pre-line">'+esc(m.detalle)+'</p>':'');
   if(m.estado==='abierta'&&!votado){
     if(st.confirm&&st.confirm.id===m.id){
-      h+='<div class="confirm"><p>Vas a votar <b>'+NOMBRES[st.confirm.op].toUpperCase()+'</b>. Una vez confirmado no se puede cambiar.</p><div class="row"><button class="btn primary" data-ok="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>'+(st.enviando?'Enviando…':'Confirmar voto')+'</button><button class="btn ghost" data-back="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>Cambiar</button></div></div>';
+      h+='<div class="confirm"><p>Vas a votar <b>'+esc(textoOp(m,st.confirm.op).toUpperCase())+'</b>. Una vez confirmado no se puede cambiar.</p><div class="row"><button class="btn primary" data-ok="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>'+(st.enviando?'Enviando…':'Confirmar voto')+'</button><button class="btn ghost" data-back="'+esc(m.id)+'"'+(st.enviando?' disabled':'')+'>Cambiar</button></div></div>';
     } else {
-      h+='<div class="choices">'+['positivo','negativo','abstencion'].map(function(k){return '<button class="choice '+k+(sel===k?' sel':'')+'" data-m="'+esc(m.id)+'" data-op="'+k+'"><span class="dot">'+LETRA[k]+'</span>'+NOMBRES[k]+'</button>';}).join('')+'</div>';
+      h+=(m.opciones&&m.opciones.length&&m.opciones[0].id!=='positivo'?'<p class="hint">Elegí una sola opción.</p>':'')+'<div class="choices">'+ops(m).map(function(o,i){var k=o.id;return '<button class="choice '+clase(k)+(sel===k?' sel':'')+'" data-m="'+esc(m.id)+'" data-op="'+esc(k)+'"><span class="dot">'+marca(k,i)+'</span><span>'+esc(o.texto)+'</span></button>';}).join('')+'</div>';
     }
   } else if(m.estado==='abierta'&&votado){
     h+='<p class="muted">Tu voto quedó registrado. Los resultados se muestran cuando se cierre la votación.</p>';
   } else if(m.resultados){
-    h+=resultadosHtml(m.resultados);
+    h+=resultadosHtml(m);
   } else {
     h+='<p class="muted">Votación cerrada. Los resultados se informan en el salón.</p>';
   }
@@ -118,8 +122,7 @@ function votacionView(){
   var abiertas=st.mociones.filter(function(m){return m.estado==='abierta';});
   var h='<div class="status ok"><strong>Podés votar</strong><p>'+esc(st.nombre)+' · DNI <span class="mono">'+fmtDni(st.dni)+'</span></p></div>';
   if(st.error)h+='<div class="status no" role="alert"><p>'+esc(st.error)+'</p></div>';
-  if(!st.mociones.length)h+='<div class="card"><h3>Todavía no hay consignas</h3><p class="muted">Cuando la mesa abra una votación, va a aparecer acá. No hace falta recargar la página.</p></div>';
-  else if(!abiertas.length)h+='<div class="status info"><p>No hay votaciones abiertas en este momento. Esta pantalla se actualiza sola.</p></div>';
+  if(!abiertas.length)h+='<div class="card wait"><span class="pulse" aria-hidden="true"></span><h3>Esperando la próxima votación</h3><p class="muted">Cuando la mesa habilite una consigna, va a aparecer acá para que votes. Dejá esta pantalla abierta: se actualiza sola.</p></div>';
   var orden=st.mociones.map(function(m,i){return {m:m,i:i};});
   orden.sort(function(a,b){function w(x){return x.m.estado==='abierta'?(st.votados[x.m.id]?1:0):2;}return w(a)-w(b)||a.i-b.i;});
   h+=orden.map(function(x){return mocionHtml(x.m,x.i);}).join('');

@@ -7,7 +7,23 @@
 //   boletas/<mocion>/<opcion>/<id> -> un voto, SIN dato del votante (voto secreto)
 import { getStore } from "@netlify/blobs";
 
-const OPCIONES = ["positivo", "negativo", "abstencion"];
+const SINO = [
+  { id: "positivo", texto: "Positivo" },
+  { id: "negativo", texto: "Negativo" },
+  { id: "abstencion", texto: "Abstención" },
+];
+// Opciones de una consigna: "sino" (Positivo/Negativo/Abstención) o "opciones"
+// (alternativas propias, p. ej. sedes, con Abstención opcional).
+function opcionesDe(m) {
+  if (m.tipo !== "opciones") return SINO;
+  const l = (m.opciones || []).map((o) => ({ id: o.id, texto: o.texto }));
+  if (m.abstencion) l.push({ id: "abstencion", texto: "Abstención" });
+  return l;
+}
+function limpiarOpciones(lista) {
+  const textos = (Array.isArray(lista) ? lista : []).map((t) => String(t || "").trim().slice(0, 120)).filter(Boolean);
+  return textos.slice(0, 8).map((texto, i) => ({ id: "o" + (i + 1), texto }));
+}
 const store = () => getStore({ name: "asamblea", consistency: "strong" });
 
 const json = (data, status = 200) =>
@@ -37,14 +53,16 @@ async function contar(s, prefix) {
   const { blobs } = await s.list({ prefix });
   return blobs.map((b) => b.key);
 }
-async function resultados(s, id) {
-  const keys = await contar(s, `boletas/${id}/`);
-  const r = { positivo: 0, negativo: 0, abstencion: 0 };
+async function resultados(s, m) {
+  const keys = await contar(s, `boletas/${m.id}/`);
+  const r = {};
+  for (const o of opcionesDe(m)) r[o.id] = 0;
+  let total = 0;
   for (const k of keys) {
     const op = k.split("/")[2];
-    if (op in r) r[op]++;
+    if (op in r) { r[op]++; total++; }
   }
-  r.total = r.positivo + r.negativo + r.abstencion;
+  r.total = total;
   return r;
 }
 async function socioActivo(s, dniRaw) {
@@ -84,26 +102,26 @@ async function estado(req, s) {
   const v = await socioActivo(s, dni);
   if (v.error) return v.error;
   const { lista } = await leerMociones(s);
-  const visibles = lista.filter((m) => m.estado !== "borrador");
+  // Los socios solo ven la consigna que la mesa habilitó (abierta); nunca resultados.
   const out = [];
-  for (const m of visibles) {
+  for (const [i, m] of lista.entries()) {
+    if (m.estado !== "abierta") continue;
     const ya = (await s.getMetadata(`voto-dni/${m.id}/${v.dni}`)) !== null;
-    const item = { id: m.id, titulo: m.titulo, detalle: m.detalle, estado: m.estado, yaVoto: ya };
-    if (m.estado === "cerrada" && m.publicar) item.resultados = await resultados(s, m.id);
-    out.push(item);
+    out.push({ id: m.id, numero: i + 1, titulo: m.titulo, detalle: m.detalle, estado: m.estado, opciones: opcionesDe(m), yaVoto: ya });
   }
   return json({ ok: true, nombre: v.socio.n, mociones: out });
 }
 
 async function votar(req, s) {
   const { dni, mocion, opcion } = await body(req);
-  if (!OPCIONES.includes(opcion)) return err("opcion_invalida", "Elegí Positivo, Negativo o Abstención.");
   const v = await socioActivo(s, dni);
   if (v.error) return v.error;
   const { lista } = await leerMociones(s);
   const m = lista.find((x) => x.id === mocion);
   if (!m) return err("sin_mocion", "Esa consigna ya no existe.", 404);
   if (m.estado !== "abierta") return err("cerrada", "La votación de esta consigna no está abierta.", 409);
+  if (!opcionesDe(m).some((o) => o.id === opcion)) return err("opcion_invalida", "Esa opción no corresponde a esta consigna.");
+  await s.set(`presentes/${v.dni}`, "1", { onlyIfNew: true });
   const marca = await s.set(`voto-dni/${m.id}/${v.dni}`, "1", { onlyIfNew: true });
   if (marca.modified === false) return err("ya_voto", "Ya registraste tu voto en esta consigna.", 409);
   try {
@@ -119,12 +137,9 @@ async function votar(req, s) {
 // así cientos de celulares consultando no disparan cientos de ejecuciones.
 async function mocionesPublicas(s) {
   const { lista } = await leerMociones(s);
-  const out = [];
-  for (const m of lista.filter((x) => x.estado !== "borrador")) {
-    const item = { id: m.id, titulo: m.titulo, detalle: m.detalle, estado: m.estado };
-    if (m.estado === "cerrada" && m.publicar) item.resultados = await resultados(s, m.id);
-    out.push(item);
-  }
+  const out = lista
+    .map((m, i) => ({ id: m.id, numero: i + 1, titulo: m.titulo, detalle: m.detalle, estado: m.estado, opciones: opcionesDe(m) }))
+    .filter((m) => m.estado === "abierta");
   return new Response(JSON.stringify({ ok: true, mociones: out, hora: Date.now() }), {
     headers: {
       "content-type": "application/json; charset=utf-8",
@@ -143,7 +158,7 @@ async function adminResumen(s) {
   const mociones = [];
   for (const m of lista) {
     const votantes = (await contar(s, `voto-dni/${m.id}/`)).length;
-    mociones.push({ ...m, votantes, resultados: await resultados(s, m.id) });
+    mociones.push({ ...m, votantes, opciones: opcionesDe(m), resultados: await resultados(s, m) });
   }
   return json({
     ok: true,
@@ -185,8 +200,11 @@ async function adminPadronBuscar(req, s) {
 }
 
 async function adminMocionCrear(req, s) {
-  const { titulo, detalle } = await body(req);
+  const { titulo, detalle, tipo, opciones, abstencion } = await body(req);
   if (!String(titulo || "").trim()) return err("sin_titulo", "Escribí la consigna a votar.");
+  const esOpc = tipo === "opciones";
+  const ops = esOpc ? limpiarOpciones(opciones) : [];
+  if (esOpc && ops.length < 2) return err("pocas_opciones", "Cargá al menos dos opciones.");
   for (let i = 0; i < 3; i++) {
     const { lista, etag } = await leerMociones(s);
     lista.push({
@@ -195,6 +213,9 @@ async function adminMocionCrear(req, s) {
       detalle: String(detalle || "").trim().slice(0, 2000),
       estado: "borrador",
       publicar: false,
+      tipo: esOpc ? "opciones" : "sino",
+      opciones: ops,
+      abstencion: esOpc ? abstencion !== false : true,
       creada: new Date().toISOString(),
     });
     if (await guardarMociones(s, lista, etag)) return json({ ok: true });
@@ -212,6 +233,12 @@ async function adminMocionEditar(req, s, id) {
     if (typeof cambios.publicar === "boolean") m.publicar = cambios.publicar;
     if (typeof cambios.titulo === "string" && cambios.titulo.trim()) m.titulo = cambios.titulo.trim().slice(0, 300);
     if (typeof cambios.detalle === "string") m.detalle = cambios.detalle.trim().slice(0, 2000);
+    if (m.estado === "borrador" && m.tipo === "opciones" && Array.isArray(cambios.opciones)) {
+      const ops = limpiarOpciones(cambios.opciones);
+      if (ops.length < 2) return err("pocas_opciones", "Cargá al menos dos opciones.");
+      m.opciones = ops;
+    }
+    if (m.estado === "borrador" && m.tipo === "opciones" && typeof cambios.abstencion === "boolean") m.abstencion = cambios.abstencion;
     if (typeof cambios.mover === "number") {
       const j = lista.indexOf(m), k = j + cambios.mover;
       if (k >= 0 && k < lista.length) { lista.splice(j, 1); lista.splice(k, 0, m); }

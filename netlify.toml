@@ -8,3 +8,8 @@
   from = "/mesa"
   to = "/admin.html"
   status = 200
+
+[[redirects]]
+  from = "/pantalla"
+  to = "/pantalla.html"
+  status = 200
