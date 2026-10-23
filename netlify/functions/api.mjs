@@ -68,9 +68,10 @@ async function resultados(s, m) {
   return r;
 }
 async function socioActivo(s, dniRaw) {
-  const dni = limpiarDni(dniRaw);
+  let dni = limpiarDni(dniRaw);
   if (!dniValido(dni)) return { dni, error: err("dni_invalido", "Ingresá un DNI válido, solo números.") };
   const padron = await leerPadron(s);
+  if (!padron.socios[dni] && padron.alias && padron.alias[dni]) dni = padron.alias[dni];
   const socio = padron.socios[dni];
   if (!socio) return { dni, error: json({ ok: false, codigo: "no_encontrado", mensaje: NO_HABILITADO }, 403) };
   if (!socio.a) return { dni, error: json({ ok: false, codigo: "inactivo", nombre: socio.n, mensaje: NO_HABILITADO }, 403) };
@@ -212,14 +213,20 @@ async function adminPadronGuardar(req, s) {
   const { socios } = await body(req);
   if (!Array.isArray(socios) || !socios.length) return err("vacio", "El padrón está vacío.");
   const mapa = {};
+  const alias = {};
   for (const x of socios) {
     const d = limpiarDni(x.dni);
     if (!dniValido(d)) continue;
     mapa[d] = { n: String(x.nombre || "").trim().slice(0, 120), a: !!x.activo };
+    for (const al of Array.isArray(x.alias) ? x.alias : []) {
+      const a = limpiarDni(al);
+      if (dniValido(a) && a !== d) alias[a] = d;
+    }
   }
+  for (const a of Object.keys(alias)) if (mapa[a]) delete alias[a];
   const total = Object.keys(mapa).length;
   if (!total) return err("vacio", "No se encontró ningún DNI válido.");
-  await s.setJSON("padron", { actualizado: new Date().toISOString(), socios: mapa });
+  await s.setJSON("padron", { actualizado: new Date().toISOString(), socios: mapa, alias });
   return json({ ok: true, total });
 }
 

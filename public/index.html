@@ -43,7 +43,7 @@ function loginView(){
   return '<form class="card" id="login" novalidate><h3>Validá tu condición de socio</h3>'+
     '<div class="field"><label for="dni">Número de DNI</label><input id="dni" class="dni" inputmode="numeric" autocomplete="off" pattern="[0-9.]*" maxlength="16" placeholder="12345678" value="'+esc(st.login.val||'')+'" required></div>'+
     '<button class="btn primary block" type="submit"'+(st.cargando?' disabled':'')+'>'+(st.cargando?'Verificando…':'Ingresar')+'</button>'+
-    '<p class="hint">Solo números, sin puntos. Tu DNI se usa para verificar que estés en el padrón. El voto es secreto: nadie puede ver qué votaste.</p></form>'+
+    '<p class="hint">Podés escribirlo con o sin puntos. Tu DNI se usa para verificar que estés en el padrón. El voto es secreto: nadie puede ver qué votaste.</p></form>'+
     (m?'<div class="status '+m.tipo+'" role="alert"><strong>'+esc(m.titulo)+'</strong><p>'+esc(m.texto)+'</p></div>':'');
 }
 function ingresar(dni){

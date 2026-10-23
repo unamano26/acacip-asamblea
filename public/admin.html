@@ -112,12 +112,13 @@ function interpretar(rows){
   if(!rows.length)return {error:'El archivo no tiene filas.'};
   /* Busca la fila de títulos (puede no ser la primera: planillas con logo o título arriba). */
   var hi=-1;for(var x=0;x<Math.min(rows.length,40);x++){if(rows[x].some(function(c){return /^(dni|documento|nro\.? de documento|n° documento|doc\.?)$/.test(normHead(c));})){hi=x;break;}}
-  var iD=-1,iN=-1,iA=-1,iAp=-1,datos=rows;
+  var iD=-1,iN=-1,iA=-1,iAp=-1,iC=-1,datos=rows;
   if(hi>=0){
     var head=rows[hi].map(normHead);
     head.forEach(function(h,i){
       if(iD<0&&/^(dni|documento|nro\.? de documento|n° documento|doc\.?)$/.test(h))iD=i;
       else if(iA<0&&/^(estado|activo|activa|habilitado|habilitada|condicion|vota|puede votar)$/.test(h))iA=i;
+      else if(iC<0&&/^(categoria|categoria de socio|tipo de socio)$/.test(h))iC=i;
       else if(iAp<0&&/^apellidos?$/.test(h))iAp=i;
       else if(iN<0&&/^(nombres?|socio|apellido y nombre|nombre y apellido)$/.test(h))iN=i;
     });
@@ -127,15 +128,20 @@ function interpretar(rows){
   }
   var socios=[],invalidos=[],vistos={},dup=0;
   datos.forEach(function(r,ix){
-    var d=String(r[iD]==null?'':r[iD]).replace(/\D/g,'').replace(/^0+/,'');
+    var crudo=String(r[iD]==null?'':r[iD]);
+    var d=crudo.replace(/\D/g,'').replace(/^0+/,'');
+    /* Cédulas con dígito verificador (ej. "CI 1360492-4"): también se acepta sin el dígito. */
+    var mg=crudo.match(/(\d[\d.,\s]*)-\s*\d\s*$/), alias=mg?mg[1].replace(/\D/g,'').replace(/^0+/,''):'';
     var nom=[iAp>=0?r[iAp]:'',iN>=0?r[iN]:''].map(function(x){return String(x==null?'':x).trim();}).filter(Boolean).join(', ');
     if(!/^\d{6,12}$/.test(d)){if(d||nom)invalidos.push((nom||'fila '+(ix+hi+2))+': '+String(r[iD]||'(sin DNI)'));return;}
     if(vistos[d]){dup++;}
     vistos[d]=true;
-    socios.push({dni:d,nombre:nom,activo:iA>=0?esActivo(r[iA]):true});
+    /* Votan Titulares y Vitalicios (en cualquiera de sus variantes); si no hay columna de categoría, se usa Estado. */
+    var activo=iC>=0?/(titular|vital)/.test(normHead(r[iC])):(iA>=0?esActivo(r[iA]):true);
+    socios.push({dni:d,nombre:nom,activo:activo,alias:(alias&&alias!==d&&/^\d{6,12}$/.test(alias))?[alias]:[]});
   });
   var mapa={};socios.forEach(function(s){mapa[s.dni]=s;});socios=Object.keys(mapa).map(function(k){return mapa[k];});
-  return {socios:socios,invalidos:invalidos,dup:dup,conEstado:iA>=0};
+  return {socios:socios,invalidos:invalidos,dup:dup,conEstado:iA>=0||iC>=0,porCategoria:iC>=0};
 }
 function leerArchivo(f){
   st.preview=null;st.previewErr='';
@@ -163,7 +169,7 @@ function padronView(){
   if(st.previewErr)h+='<div class="status no" role="alert"><p>'+esc(st.previewErr)+'</p></div>';
   if(p){
     var act=p.socios.filter(function(s){return s.activo;}).length;
-    h+='<div class="status info"><strong>'+p.socios.length+' socios leídos'+(st.hoja?' (hoja “'+esc(st.hoja)+'”)':'')+'</strong><p>'+act+' activos · '+(p.socios.length-act)+' no activos'+(p.conEstado?'':' (sin columna de estado: todos activos)')+(p.dup?' · '+p.dup+' DNI repetidos (se toma la última fila)':'')+'</p>'+
+    h+='<div class="status info"><strong>'+p.socios.length+' socios leídos'+(st.hoja?' (hoja “'+esc(st.hoja)+'”)':'')+'</strong><p>'+act+' activos · '+(p.socios.length-act)+' no activos'+(p.porCategoria?' · votan Titulares y Vitalicios según la columna Categoría':(p.conEstado?'':' (sin columna de estado: todos activos)'))+(p.dup?' · '+p.dup+' DNI repetidos (se toma la última fila)':'')+'</p>'+
     (p.invalidos.length?'<p>Se descartan '+p.invalidos.length+' filas con DNI inválido: '+esc(p.invalidos.slice(0,6).join(' · '))+(p.invalidos.length>6?'…':'')+'</p>':'')+'</div>'+
     '<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th></tr></thead><tbody>'+p.socios.slice(0,8).map(function(s){return '<tr><td class="mono">'+esc(s.dni)+'</td><td>'+esc(s.nombre)+'</td><td>'+(s.activo?'Activo':'No activo')+'</td></tr>';}).join('')+'</tbody></table></div>'+
     (p.socios.length>8?'<p class="hint">y '+(p.socios.length-8)+' más.</p>':'')+
