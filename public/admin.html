@@ -24,7 +24,7 @@
 <script>
 (function(){
 var view=document.getElementById('view'), PK='asamblea-admin';
-var st={pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true},editando:null,resetPres:false};
+var st={hab:{dni:'',nombre:''},asis:null,pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true},editando:null,resetPres:false};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function sget(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}
 function sput(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v);}catch(e){}}
@@ -48,8 +48,9 @@ function loginView(){
 function cargar(){return api('resumen').then(function(r){if(r.ok){st.resumen=r;render();}});}
 function statsHtml(){
   var r=st.resumen;if(!r)return '<p class="muted">Cargando…</p>';
-  return '<div class="stats"><div class="stat"><span class="label">Socios presentes</span><b>'+r.presentes+'</b><span class="hint">ingresaron con su DNI</span></div>'+
-  '<div class="stat"><span class="label">Socios activos</span><b>'+r.padron.activos+'</b><span class="hint">de '+r.padron.total+' en el padrón</span></div>'+
+  return '<div class="stats"><div class="stat"><span class="label">Pueden votar (presentes)</span><b>'+r.presentes+'</b><span class="hint">socios habilitados que ingresaron</span></div>'+
+  '<div class="stat"><span class="label">Asistentes sin voto</span><b>'+(r.asistentes||0)+'</b><span class="hint">acreditados que no pueden votar</span></div>'+
+  '<div class="stat"><span class="label">Padrón habilitado</span><b>'+r.padron.activos+'</b><span class="hint">socios que pueden votar</span></div>'+
   '<div class="stat"><span class="label">Consignas</span><b>'+r.mociones.length+'</b><span class="hint">'+r.mociones.filter(function(m){return m.estado==='abierta';}).length+' abiertas</span></div></div>';
 }
 function clase(id){return NOMBRES[id]?id:'alt';}
@@ -155,7 +156,7 @@ function padronView(){
   var r=st.resumen, p=st.preview;
   var h='<div class="card"><h3>Padrón actual</h3>'+(r?'<p>'+r.padron.total+' socios cargados · <b>'+r.padron.activos+' activos</b> · '+(r.padron.total-r.padron.activos)+' no activos</p><p class="hint">Última carga: '+fmtFecha(r.padron.actualizado)+'</p>':'<p class="muted">Cargando…</p>')+
   '<form class="row" id="buscar"><div class="field" style="flex:1;min-width:200px"><label for="q">Buscar socio por DNI o apellido</label><input id="q" value="'+esc(st.buscar.q)+'"></div><button class="btn ghost" type="submit" style="align-self:flex-end">Buscar</button></form>';
-  if(st.buscar.res){h+=st.buscar.res.length?'<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th><th>Ingresó</th></tr></thead><tbody>'+st.buscar.res.map(function(x){return '<tr><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+'</td><td>'+(x.activo?'Activo':'No activo')+'</td><td>'+(x.presente?'Sí':'No')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Sin resultados.</p>';}
+  if(st.buscar.res){h+=st.buscar.res.length?'<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th><th>Ingresó</th><th></th></tr></thead><tbody>'+st.buscar.res.map(function(x){return '<tr><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+'</td><td>'+(x.activo?'Habilitado':'No habilitado')+'</td><td>'+(x.presente?'Sí':'No')+'</td><td>'+(x.activo?'<button class="btn ghost small" data-socio="'+esc(x.dni)+'" data-activo="0" data-nombre="'+esc(x.nombre)+'">Quitar habilitación</button>':'<button class="btn primary small" data-socio="'+esc(x.dni)+'" data-activo="1" data-nombre="'+esc(x.nombre)+'">Habilitar</button>')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Sin resultados.</p>';}
   h+='</div>';
   h+='<div class="card"><h3>Cargar padrón</h3><p class="muted">Subí un Excel o CSV con una columna <b>DNI</b>, una de <b>Nombre</b> (o Apellido y Nombre) y una de <b>Estado</b> o <b>Activo</b>. Cuentan como activos: “Sí”, “Activo”, “Habilitado”, “1” o “X”. Si no hay columna de estado, todos se cargan como activos.</p>'+
   '<div class="row"><button class="btn primary" data-elegir="1">Elegir archivo Excel o CSV</button><span class="hint">'+esc(st.archivoNombre||'Ningún archivo elegido')+'</span></div>';
@@ -169,18 +170,49 @@ function padronView(){
     '<div class="row"><button class="btn primary" data-guardarpadron="1">Reemplazar padrón con estos '+p.socios.length+' socios</button><button class="btn ghost" data-descartar="1">Descartar</button></div>';
   }
   h+='</div>';
-  h+='<div class="card"><h3>Presentes</h3><p class="muted">Se cuenta un socio presente cuando ingresa con su DNI. Si hiciste pruebas antes de la asamblea, reiniciá el contador.</p>'+
-  (st.resetPres?'<div class="row"><button class="btn danger small" data-resetok="1">Sí, poner presentes en cero</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div>':'<button class="btn ghost small" data-reset="1" style="align-self:flex-start">Reiniciar presentes</button>')+'</div>';
+  h+='<div class="card"><h3>Reiniciar acreditaciones</h3><p class="muted">Borra los ingresos de socios habilitados y de asistentes sin voto. Usalo solo para limpiar las pruebas antes de la asamblea.</p>'+
+  (st.resetPres?'<div class="row"><button class="btn danger small" data-resetok="1">Sí, borrar acreditaciones</button><button class="btn ghost small" data-cancelar="1">Cancelar</button></div>':'<button class="btn ghost small" data-reset="1" style="align-self:flex-start">Reiniciar acreditaciones</button>')+'</div>';
   return h;
+}
+
+/* ---------- Asistencia ---------- */
+function hora(iso){if(!iso)return '—';var d=new Date(iso);return isNaN(d)?'—':d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});}
+function fecha(iso){if(!iso)return '';var d=new Date(iso);return isNaN(d)?'':d.toLocaleDateString('es-AR');}
+var MOTIVO={no_figura_en_padron:'No figura en el padrón habilitado',socio_no_activo:'Socio no habilitado'};
+function cargarAsistencia(){return api('asistencia').then(function(r){if(r.ok){st.asis=r;render();}});}
+function asistenciaView(){
+  var a=st.asis,h='<form class="card" id="habilitar"><h3>Habilitar a un socio para votar</h3><p class="muted">Para socios que pasaron por secretaría y regularizaron su situación. Queda habilitado al instante: el socio vuelve a ingresar su DNI y ya puede votar.</p>'+
+  '<div class="row" style="align-items:flex-end"><div class="field" style="flex:1;min-width:150px"><label for="h-dni">DNI</label><input id="h-dni" inputmode="numeric" value="'+esc(st.hab.dni)+'"></div><div class="field" style="flex:2;min-width:220px"><label for="h-nombre">Apellido y nombre</label><input id="h-nombre" value="'+esc(st.hab.nombre)+'"></div><button class="btn primary" type="submit">Habilitar</button></div></form>';
+  if(!a)return h+'<p class="muted">Cargando asistencia…</p>';
+  h+='<div class="spread"><p class="muted">'+a.habilitados.length+' socios habilitados ingresaron · '+a.sinVoto.length+' asistentes sin voto · '+(a.habilitados.length+a.sinVoto.length)+' en total</p><div class="row"><button class="btn ghost small" data-refasis="1">Actualizar</button><button class="btn primary small" data-reporte="1">Descargar reporte de asistencia</button></div></div>';
+  h+='<div class="card"><h3>Asistentes sin voto</h3>'+(a.sinVoto.length?'<div class="scroll"><table><thead><tr><th>Hora</th><th>DNI</th><th>Nombre</th><th>Motivo</th><th></th></tr></thead><tbody>'+a.sinVoto.map(function(x){
+    return '<tr><td class="mono">'+hora(x.hora)+'</td><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+'</td><td>'+esc(MOTIVO[x.motivo]||x.motivo)+'</td><td>'+(x.habilitadoLuego?'<span class="pill abierta">Habilitado</span>':'<button class="btn primary small" data-socio="'+esc(x.dni)+'" data-activo="1" data-nombre="'+esc(x.nombre)+'">Habilitar para votar</button>')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Nadie se registró sin voto todavía.</p>')+'</div>';
+  h+='<div class="card"><h3>Socios habilitados que ingresaron</h3>'+(a.habilitados.length?'<div class="scroll"><table><thead><tr><th>Hora</th><th>DNI</th><th>Nombre</th></tr></thead><tbody>'+a.habilitados.map(function(x){
+    return '<tr><td class="mono">'+hora(x.hora)+'</td><td class="mono">'+esc(x.dni)+'</td><td>'+esc(x.nombre)+(x.habilitadoEnSecretaria?' <span class="pill borrador">Habilitado en secretaría</span>':'')+'</td></tr>';}).join('')+'</tbody></table></div>':'<p class="muted">Todavía no ingresó ningún socio.</p>')+'</div>';
+  return h;
+}
+function reporte(){
+  var a=st.asis,f=[['Condición','Hora de ingreso','Fecha','DNI','Apellido y nombre','Observación']];
+  a.habilitados.forEach(function(x){f.push(['Habilitado para votar',hora(x.hora),fecha(x.hora),x.dni,x.nombre,x.habilitadoEnSecretaria?'Habilitado en secretaría':'']);});
+  a.sinVoto.forEach(function(x){f.push([x.habilitadoLuego?'Habilitado en secretaría (aún no reingresó)':'Asistente sin voto',hora(x.hora),fecha(x.hora),x.dni,x.nombre,MOTIVO[x.motivo]||x.motivo]);});
+  var txt='\ufeff'+f.map(function(r){return r.map(function(c){return '"'+String(c==null?'':c).replace(/"/g,'""')+'"';}).join(';');}).join('\r\n');
+  var el=document.createElement('a');el.href=URL.createObjectURL(new Blob([txt],{type:'text/csv'}));el.download='asistencia-asamblea-acacip.csv';document.body.appendChild(el);el.click();el.remove();
+}
+function habilitar(dni,nombre,activo){
+  return api('socio','POST',{dni:dni,nombre:nombre,activo:activo}).then(function(r){
+    if(r.ok){toast((r.activo?'Habilitado: ':'Sin habilitación: ')+r.nombre);st.hab={dni:'',nombre:''};cargar();if(st.tab==='asistencia')cargarAsistencia();if(st.buscar.res)api('padron/buscar?q='+encodeURIComponent(st.buscar.q)).then(function(b){st.buscar.res=b.ok?b.resultados:[];render();});}
+    else toast(r.mensaje||'No se pudo actualizar.');
+    return r;
+  });
 }
 
 function render(){
   var a=document.activeElement, fid=a&&a.id, pos=a&&a.selectionStart;
   if(!st.pw){view.innerHTML=loginView();return;}
   view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+
-    '<div class="spread"><div class="tabs" role="tablist"><button class="tab" role="tab" data-tab="mociones" aria-selected="'+(st.tab==='mociones')+'">Consignas y votación</button><button class="tab" role="tab" data-tab="padron" aria-selected="'+(st.tab==='padron')+'">Padrón</button></div>'+
+    '<div class="spread"><div class="tabs" role="tablist"><button class="tab" role="tab" data-tab="mociones" aria-selected="'+(st.tab==='mociones')+'">Consignas y votación</button><button class="tab" role="tab" data-tab="asistencia" aria-selected="'+(st.tab==='asistencia')+'">Asistencia</button><button class="tab" role="tab" data-tab="padron" aria-selected="'+(st.tab==='padron')+'">Padrón</button></div>'+
     '<div class="row"><a class="btn primary small" href="/pantalla" target="_blank" rel="noopener">Proyectar en pantalla</a><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
-    statsHtml()+(st.tab==='mociones'?mocionesView():padronView())+'</div>';
+    statsHtml()+(st.tab==='mociones'?mocionesView():st.tab==='asistencia'?asistenciaView():padronView())+'</div>';
   if(fid){var el=document.getElementById(fid);if(el){el.focus();try{if(pos!=null)el.setSelectionRange(pos,pos);}catch(e){}}}
 }
 
@@ -200,6 +232,7 @@ view.addEventListener('submit',function(e){
     var nv=st.nueva,ops=nv.opciones.map(function(x){return x.trim();}).filter(Boolean);
     if(nv.tipo==='opciones'&&ops.length<2){toast('Cargá al menos dos opciones');return;}
     accion(api('mociones','POST',{titulo:t,detalle:nv.detalle,tipo:nv.tipo,opciones:ops,abstencion:nv.abstencion})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true};render();toast('Consigna agregada');}});return;}
+  if(e.target.id==='habilitar'){var hd=st.hab.dni.replace(/\D/g,''),hn=st.hab.nombre.trim();if(hd.length<6){toast('Revisá el DNI');return;}habilitar(hd,hn,true);return;}
   if(e.target.id==='buscar'){api('padron/buscar?q='+encodeURIComponent(st.buscar.q)).then(function(r){st.buscar.res=r.ok?r.resultados:[];render();});}
 });
 view.addEventListener('input',function(e){
@@ -207,6 +240,8 @@ view.addEventListener('input',function(e){
   if(e.target.id==='n-detalle')st.nueva.detalle=e.target.value;
   var mo=e.target.id&&e.target.id.match(/^n-op-(\d+)$/);if(mo)st.nueva.opciones[+mo[1]]=e.target.value;
   if(e.target.id==='q')st.buscar.q=e.target.value;
+  if(e.target.id==='h-dni')st.hab.dni=e.target.value;
+  if(e.target.id==='h-nombre')st.hab.nombre=e.target.value;
 });
 document.getElementById('archivo').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;st.archivoNombre=f.name;leerArchivo(f);e.target.value='';});
 view.addEventListener('change',function(e){
@@ -215,7 +250,10 @@ view.addEventListener('change',function(e){
 });
 view.addEventListener('click',function(e){
   var t=e.target.closest('button');if(!t)return;var d=t.dataset;
-  if(d.tab){st.tab=d.tab;render();return;}
+  if(d.tab){st.tab=d.tab;render();if(d.tab==='asistencia')cargarAsistencia();return;}
+  if(d.socio){t.disabled=true;habilitar(d.socio,d.nombre,d.activo==='1');return;}
+  if(d.refasis){cargarAsistencia();return;}
+  if(d.reporte){reporte();return;}
   if(d.agregarop){st.nueva.opciones.push('');render();var el=document.getElementById('n-op-'+(st.nueva.opciones.length-1));if(el)el.focus();return;}
   if(d.quitarop){st.nueva.opciones.splice(+d.quitarop,1);render();return;}
   if(d.elegir){document.getElementById('archivo').click();return;}
@@ -232,13 +270,14 @@ view.addEventListener('click',function(e){
   if(d.descartar){st.preview=null;render();return;}
   if(d.guardarpadron){var p=st.preview;t.disabled=true;accion(api('padron','PUT',{socios:p.socios})).then(function(r){if(r.ok){st.preview=null;render();toast('Padrón guardado: '+r.total+' socios');}});return;}
   if(d.reset){st.resetPres=true;render();return;}
-  if(d.resetok){st.resetPres=false;accion(api('presentes','DELETE')).then(function(r){if(r.ok)toast('Presentes en cero');});return;}
+  if(d.resetok){st.resetPres=false;accion(api('presentes','DELETE')).then(function(r){if(r.ok){toast('Acreditaciones borradas');st.asis=null;}});return;}
 });
 
 st.pw=sget(PK)||'';
 render();
 if(st.pw)cargar();
-setInterval(function(){if(st.pw&&!document.hidden&&!st.editando&&st.tab!=='padron')cargar();},3000);
+setInterval(function(){if(st.pw&&!document.hidden&&!st.editando&&st.tab==='mociones')cargar();},3000);
+setInterval(function(){if(st.pw&&!document.hidden&&st.tab==='asistencia'){cargar();cargarAsistencia();}},10000);
 })();
 </script>
 </body>

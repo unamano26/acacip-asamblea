@@ -33,6 +33,7 @@ const json = (data, status = 200) =>
   });
 const err = (codigo, mensaje, status = 400) => json({ ok: false, codigo, mensaje }, status);
 
+const NO_HABILITADO = "No estás habilitado para votar por no ser socio titular, que es quien puede votar, o bien porque hay algún trámite que te falta realizar. Acercate a secretaría para formalizar tu participación.";
 const limpiarDni = (v) => String(v ?? "").replace(/\D/g, "").replace(/^0+/, "");
 const dniValido = (d) => /^\d{6,12}$/.test(d);
 const rid = () => crypto.randomUUID();
@@ -71,8 +72,8 @@ async function socioActivo(s, dniRaw) {
   if (!dniValido(dni)) return { dni, error: err("dni_invalido", "Ingresá un DNI válido, solo números.") };
   const padron = await leerPadron(s);
   const socio = padron.socios[dni];
-  if (!socio) return { dni, error: err("no_encontrado", "Ese DNI no figura en el padrón de socios.", 403) };
-  if (!socio.a) return { dni, error: json({ ok: false, codigo: "inactivo", nombre: socio.n, mensaje: "Figurás en el padrón, pero no como socio activo." }, 403) };
+  if (!socio) return { dni, error: json({ ok: false, codigo: "no_encontrado", mensaje: NO_HABILITADO }, 403) };
+  if (!socio.a) return { dni, error: json({ ok: false, codigo: "inactivo", nombre: socio.n, mensaje: NO_HABILITADO }, 403) };
   return { dni, socio };
 }
 
@@ -89,13 +90,44 @@ async function body(req) {
   try { return await req.json(); } catch { return {}; }
 }
 
+// Marca de ingreso: guarda la hora del primer ingreso y no la pisa después.
+async function marcarPresente(s, dni) {
+  if ((await s.getMetadata(`presentes/${dni}`)) === null) {
+    await s.set(`presentes/${dni}`, new Date().toISOString(), { onlyIfNew: true });
+  }
+}
+async function enLotes(items, fn, n = 25) {
+  const out = [];
+  for (let i = 0; i < items.length; i += n) out.push(...(await Promise.all(items.slice(i, i + n).map(fn))));
+  return out;
+}
+
 // ---------- Rutas públicas ----------
 async function ingresar(req, s) {
   const { dni } = await body(req);
   const v = await socioActivo(s, dni);
   if (v.error) return v.error;
-  await s.set(`presentes/${v.dni}`, "1", { onlyIfNew: true });
+  await marcarPresente(s, v.dni);
   return json({ ok: true, nombre: v.socio.n });
+}
+
+// Quien no puede votar igual queda acreditado como asistente.
+async function registrarAsistente(req, s) {
+  const { dni: dniRaw, nombre } = await body(req);
+  const dni = limpiarDni(dniRaw);
+  if (!dniValido(dni)) return err("dni_invalido", "Ingresá un DNI válido, solo números.");
+  const padron = await leerPadron(s);
+  const socio = padron.socios[dni];
+  if (socio && socio.a) return err("habilitado", "Ese DNI está habilitado para votar. Volvé a ingresar con tu DNI.", 409);
+  const nom = String(nombre || (socio && socio.n) || "").trim().slice(0, 120);
+  if (!nom) return err("sin_nombre", "Escribí tu nombre y apellido.");
+  const previo = await s.get(`asistentes/${dni}`, { type: "json" });
+  await s.setJSON(`asistentes/${dni}`, {
+    nombre: nom,
+    hora: (previo && previo.hora) || new Date().toISOString(),
+    motivo: socio ? "socio_no_activo" : "no_figura_en_padron",
+  });
+  return json({ ok: true, nombre: nom });
 }
 
 async function estado(req, s) {
@@ -122,7 +154,7 @@ async function votar(req, s) {
   if (!m) return err("sin_mocion", "Esa consigna ya no existe.", 404);
   if (m.estado !== "abierta") return err("cerrada", "La votación de esta consigna no está abierta.", 409);
   if (!opcionesDe(m).some((o) => o.id === opcion)) return err("opcion_invalida", "Esa opción no corresponde a esta consigna.");
-  await s.set(`presentes/${v.dni}`, "1", { onlyIfNew: true });
+  await marcarPresente(s, v.dni);
   const claveVoto = `voto-dni/${m.id}/${v.dni}`;
   if ((await s.getMetadata(claveVoto)) !== null) return err("ya_voto", "Ya registraste tu voto en esta consigna.", 409);
   const marca = await s.set(claveVoto, "1", { onlyIfNew: true });
@@ -156,7 +188,11 @@ async function mocionesPublicas(s) {
 async function adminResumen(s) {
   const padron = await leerPadron(s);
   const socios = Object.values(padron.socios);
-  const presentes = (await contar(s, "presentes/")).length;
+  const presKeys = await contar(s, "presentes/");
+  const presentes = presKeys.length;
+  const presSet = new Set(presKeys.map((k) => k.split("/")[1]));
+  // Asistentes sin voto: los que no terminaron ingresando como habilitados.
+  const asistentes = (await contar(s, "asistentes/")).filter((k) => !presSet.has(k.split("/")[1])).length;
   const { lista } = await leerMociones(s);
   const mociones = [];
   for (const m of lista) {
@@ -167,6 +203,7 @@ async function adminResumen(s) {
     ok: true,
     padron: { actualizado: padron.actualizado, total: socios.length, activos: socios.filter((x) => x.a).length },
     presentes,
+    asistentes,
     mociones,
   });
 }
@@ -264,7 +301,49 @@ async function adminMocionBorrar(s, id) {
   return err("conflicto", "Otra persona modificó las consignas. Probá de nuevo.", 409);
 }
 
+async function adminAsistencia(s) {
+  const padron = await leerPadron(s);
+  const pres = await contar(s, "presentes/");
+  const habilitados = await enLotes(pres, async (k) => {
+    const dni = k.split("/")[1];
+    const v = await s.get(k);
+    return { dni, nombre: (padron.socios[dni] && padron.socios[dni].n) || "", hora: v && v.length > 5 ? v : null };
+  });
+  const presSet = new Set(pres.map((k) => k.split("/")[1]));
+  const asisTodos = await contar(s, "asistentes/");
+  const enSecretaria = new Set(asisTodos.map((k) => k.split("/")[1]));
+  for (const h of habilitados) h.habilitadoEnSecretaria = enSecretaria.has(h.dni);
+  const asis = asisTodos.filter((k) => !presSet.has(k.split("/")[1]));
+  const sinVoto = await enLotes(asis, async (k) => {
+    const dni = k.split("/")[1];
+    const a = (await s.get(k, { type: "json" })) || {};
+    const ahora = padron.socios[dni];
+    return { dni, nombre: a.nombre || "", hora: a.hora || null, motivo: a.motivo || "", habilitadoLuego: !!(ahora && ahora.a) };
+  });
+  const orden = (x, y) => String(x.hora || "").localeCompare(String(y.hora || ""));
+  return json({ ok: true, habilitados: habilitados.sort(orden), sinVoto: sinVoto.sort(orden) });
+}
+
+async function adminSocio(req, s) {
+  const { dni: dniRaw, nombre, activo } = await body(req);
+  const dni = limpiarDni(dniRaw);
+  if (!dniValido(dni)) return err("dni_invalido", "El DNI debe tener entre 6 y 12 números.");
+  for (let i = 0; i < 3; i++) {
+    const r = await s.getWithMetadata("padron", { type: "json" });
+    const padron = (r && r.data) || { actualizado: null, socios: {} };
+    const previo = padron.socios[dni];
+    const nom = String(nombre || (previo && previo.n) || "").trim().slice(0, 120);
+    if (!nom) return err("sin_nombre", "Escribí el apellido y nombre del socio.");
+    padron.socios[dni] = { n: nom, a: activo !== false };
+    padron.actualizado = new Date().toISOString();
+    const w = await s.setJSON("padron", padron, r ? { onlyIfMatch: r.etag } : { onlyIfNew: true });
+    if (!w || w.modified !== false) return json({ ok: true, dni, nombre: nom, activo: activo !== false, nuevo: !previo });
+  }
+  return err("conflicto", "El padrón se modificó al mismo tiempo. Probá de nuevo.", 409);
+}
+
 async function adminReiniciarPresentes(s) {
+  for (const k of await contar(s, "asistentes/")) await s.delete(k);
   for (const k of await contar(s, "presentes/")) await s.delete(k);
   return json({ ok: true });
 }
@@ -277,6 +356,7 @@ export default async (req) => {
     if (path === "ingresar" && metodo === "POST") return await ingresar(req, s);
     if (path === "estado" && metodo === "GET") return await estado(req, s);
     if (path === "votar" && metodo === "POST") return await votar(req, s);
+    if (path === "asistente" && metodo === "POST") return await registrarAsistente(req, s);
     if (path === "mociones" && metodo === "GET") return await mocionesPublicas(s);
 
     if (path.startsWith("admin")) {
@@ -286,6 +366,8 @@ export default async (req) => {
       if (path === "admin/padron" && metodo === "PUT") return await adminPadronGuardar(req, s);
       if (path === "admin/padron/buscar" && metodo === "GET") return await adminPadronBuscar(req, s);
       if (path === "admin/presentes" && metodo === "DELETE") return await adminReiniciarPresentes(s);
+      if (path === "admin/asistencia" && metodo === "GET") return await adminAsistencia(s);
+      if (path === "admin/socio" && metodo === "POST") return await adminSocio(req, s);
       if (path === "admin/mociones" && metodo === "POST") return await adminMocionCrear(req, s);
       const m = path.match(/^admin\/mociones\/([a-z0-9]+)$/);
       if (m && metodo === "PATCH") return await adminMocionEditar(req, s, m[1]);

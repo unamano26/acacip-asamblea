@@ -93,7 +93,7 @@ function login(){
 function pantalla(){
   var d=st.data,m=actual(),v=visibles(),pres=d.presentes;
   var h='<div class="screen"><header><span class="logo" role="img" aria-label="Logo ACACIP"></span><div><div class="org">ACACIP</div><h1>Asamblea General <b>de Socios</b></h1></div>'+
-    '<div class="pres"><b>'+pres+'</b><span>Socios presentes</span></div></header><main>';
+    '<div class="pres"><b>'+pres+'</b><span>Habilitados presentes</span></div></header><main>';
   if(!m){h+='<p class="empty">Todavía no hay votaciones abiertas.</p>';}
   else{
     var n=d.mociones.indexOf(m)+1,t=m.resultados.total||0,max=0;
@@ -108,7 +108,7 @@ function pantalla(){
   }
   h+='</main><footer>';
   if(m){var pv=pres?Math.min(100,Math.round(m.votantes*100/pres)):0;
-    h+='<div class="part"><div class="txt"><b>'+m.votantes+'</b> de <b>'+pres+'</b> socios presentes votaron · <b>'+(m.resultados.total||0)+'</b> votos emitidos</div><div class="ptrack"><div class="pfill" style="width:'+pv+'%"></div></div></div>';}
+    h+='<div class="part"><div class="txt"><b>'+m.votantes+'</b> de <b>'+pres+'</b> habilitados presentes votaron · <b>'+(m.resultados.total||0)+'</b> votos emitidos</div><div class="ptrack"><div class="pfill" style="width:'+pv+'%"></div></div></div>';}
   h+='<div class="controls'+(st.dim?' dim':'')+'" id="ctl">'+
     '<button class="c" data-a="auto" aria-pressed="'+(st.modo==='auto')+'">Seguir la votación abierta</button>'+
     (v.length>1?'<button class="c" data-a="prev" aria-label="Consigna anterior">◀</button><button class="c" data-a="next" aria-label="Consigna siguiente">▶</button>':'')+

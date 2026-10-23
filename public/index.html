@@ -51,9 +51,37 @@ function ingresar(dni){
   api('ingresar',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({dni:dni})}).then(function(r){
     st.cargando=false;
     if(r.ok){st.dni=dni.replace(/\D/g,'');st.nombre=r.nombre;put(KEY,st.dni);st.login={msg:null};cargarEstado();return;}
-    if(r.codigo==='inactivo')st.login.msg={tipo:'no',titulo:'No podés votar',texto:(r.nombre?r.nombre+': f':'F')+'igurás en el padrón, pero no como socio activo. Si creés que es un error, acercate a la mesa de acreditación.'};
-    else if(r.codigo==='no_encontrado')st.login.msg={tipo:'no',titulo:'DNI no encontrado',texto:'El DNI '+fmtDni(dni.replace(/\D/g,''))+' no figura en el padrón de socios. Revisá el número o acercate a la mesa de acreditación.'};
+    if(r.codigo==='inactivo'||r.codigo==='no_encontrado'){st.asis={dni:dni.replace(/\D/g,''),nombre:r.nombre||'',mensaje:r.mensaje,registrado:false,enviando:false,error:''};st.login={msg:null};}
     else st.login.msg={tipo:'no',titulo:'No pudimos verificar',texto:r.mensaje||'Probá de nuevo.'};
+    render();
+  });
+}
+
+/* ---------- Asistente sin voto ---------- */
+function asisView(){
+  var a=st.asis;
+  var h='<div class="status no" role="alert"><strong>Ingreso sin voto</strong><p>'+esc(a.mensaje)+'</p></div>';
+  if(!a.registrado){
+    h+='<form class="card" id="asis" novalidate><h3>Registrá tu asistencia</h3><p class="muted">Podés participar de la asamblea aunque no votes. Dejá tus datos para quedar acreditado.</p>'+
+      '<p>DNI <span class="mono">'+fmtDni(a.dni)+'</span></p>'+
+      '<div class="field"><label for="asis-nombre">Nombre y apellido</label><input id="asis-nombre" autocomplete="name" value="'+esc(a.nombre)+'" required></div>'+
+      (a.error?'<p class="hint" style="color:var(--neg)">'+esc(a.error)+'</p>':'')+
+      '<button class="btn primary block" type="submit"'+(a.enviando?' disabled':'')+'>'+(a.enviando?'Registrando…':'Registrar mi asistencia')+'</button></form>';
+  } else {
+    h+='<div class="status info"><strong>Asistencia registrada</strong><p>'+esc(a.nombre)+' · DNI <span class="mono">'+fmtDni(a.dni)+'</span></p></div>';
+  }
+  h+='<div class="card"><p class="muted">Si en secretaría te habilitan para votar, volvé a ingresar con tu DNI.</p><div class="row"><button class="btn ghost" data-reintentar="1">Volver a ingresar</button><button class="btn ghost" data-otro="1">Usar otro DNI</button></div></div>';
+  return h;
+}
+function registrarAsis(){
+  var a=st.asis,n=(document.getElementById('asis-nombre').value||'').trim();a.nombre=n;
+  if(n.length<3){a.error='Escribí tu nombre y apellido.';render();return;}
+  a.enviando=true;a.error='';render();
+  api('asistente',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({dni:a.dni,nombre:n})}).then(function(r){
+    a.enviando=false;
+    if(r.ok){a.registrado=true;a.nombre=r.nombre;toast('Asistencia registrada');}
+    else if(r.codigo==='habilitado'){var d=a.dni;st.asis=null;ingresar(d);return;}
+    else a.error=r.mensaje||'No se pudo registrar. Probá de nuevo.';
     render();
   });
 }
@@ -62,7 +90,8 @@ function ingresar(dni){
 function cargarEstado(){
   return api('estado?dni='+encodeURIComponent(st.dni)).then(function(r){
     if(!r.ok){
-      if(r.codigo==='no_encontrado'||r.codigo==='inactivo'||r.codigo==='dni_invalido'){salir();st.login.msg={tipo:'no',titulo:'No podés votar',texto:r.mensaje};render();return;}
+      if(r.codigo==='no_encontrado'||r.codigo==='inactivo'){var d=st.dni;salir();st.asis={dni:d,nombre:r.nombre||'',mensaje:r.mensaje,registrado:false,enviando:false,error:''};render();return;}
+      if(r.codigo==='dni_invalido'){salir();st.login.msg={tipo:'no',titulo:'Revisá el número',texto:r.mensaje};render();return;}
       st.error=r.mensaje;render();return;
     }
     st.error='';st.nombre=r.nombre;st.mociones=r.mociones;
@@ -132,18 +161,21 @@ function votacionView(){
 function salir(){st.dni='';st.nombre='';st.votados={};st.sel={};st.confirm=null;put(KEY,null);}
 function render(){
   var focus=document.activeElement&&document.activeElement.id;
-  view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+(st.dni?votacionView():loginView())+'</div>';
+  view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+(st.dni?votacionView():(st.asis?asisView():loginView()))+'</div>';
   if(focus){var el=document.getElementById(focus);if(el){el.focus();}}
 }
 
 view.addEventListener('submit',function(e){
+  if(e.target.id==='asis'){e.preventDefault();registrarAsis();return;}
   if(e.target.id!=='login')return;e.preventDefault();
   var v=(document.getElementById('dni').value||'').replace(/\D/g,'');
   if(v.length<6){st.login.val=v;st.login.msg={tipo:'no',titulo:'Revisá el número',texto:'Revisá el número: el DNI tiene entre 6 y 12 números.'};render();return;}
   ingresar(v);
 });
 view.addEventListener('click',function(e){
-  var t=e.target.closest('[data-m],[data-ok],[data-back],[data-salir]');if(!t)return;
+  var t=e.target.closest('[data-m],[data-ok],[data-back],[data-salir],[data-reintentar],[data-otro]');if(!t)return;
+  if(t.dataset.reintentar){var d=st.asis.dni;st.asis=null;ingresar(d);return;}
+  if(t.dataset.otro){st.asis=null;st.login={msg:null};render();return;}
   if(t.dataset.salir){salir();render();return;}
   if(t.dataset.m){st.sel[t.dataset.m]=t.dataset.op;st.confirm={id:t.dataset.m,op:t.dataset.op};render();return;}
   if(t.dataset.back){st.confirm=null;render();return;}
