@@ -41,7 +41,7 @@ function fmtDni(d){return String(d).replace(/\B(?=(\d{3})+(?!\d))/g,'.');}
 function loginView(){
   var m=st.login.msg;
   return '<form class="card" id="login" novalidate><h3>Validá tu condición de socio</h3>'+
-    '<div class="field"><label for="dni">Número de DNI</label><input id="dni" class="dni" inputmode="numeric" autocomplete="off" pattern="[0-9.]*" maxlength="11" placeholder="12345678" value="'+esc(st.login.val||'')+'" required></div>'+
+    '<div class="field"><label for="dni">Número de DNI</label><input id="dni" class="dni" inputmode="numeric" autocomplete="off" pattern="[0-9.]*" maxlength="16" placeholder="12345678" value="'+esc(st.login.val||'')+'" required></div>'+
     '<button class="btn primary block" type="submit"'+(st.cargando?' disabled':'')+'>'+(st.cargando?'Verificando…':'Ingresar')+'</button>'+
     '<p class="hint">Solo números, sin puntos. Tu DNI se usa para verificar que estés en el padrón. El voto es secreto: nadie puede ver qué votaste.</p></form>'+
     (m?'<div class="status '+m.tipo+'" role="alert"><strong>'+esc(m.titulo)+'</strong><p>'+esc(m.texto)+'</p></div>':'');
@@ -139,7 +139,7 @@ function render(){
 view.addEventListener('submit',function(e){
   if(e.target.id!=='login')return;e.preventDefault();
   var v=(document.getElementById('dni').value||'').replace(/\D/g,'');
-  if(v.length<6){st.login.val=v;st.login.msg={tipo:'no',titulo:'Revisá el número',texto:'El DNI debe tener entre 6 y 9 números.'};render();return;}
+  if(v.length<6){st.login.val=v;st.login.msg={tipo:'no',titulo:'Revisá el número',texto:'Revisá el número: el DNI tiene entre 6 y 12 números.'};render();return;}
   ingresar(v);
 });
 view.addEventListener('click',function(e){

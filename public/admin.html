@@ -109,17 +109,26 @@ function esActivo(v){var s=normHead(v);if(s==='')return true;return /^(si|s|acti
 function interpretar(rows){
   rows=rows.filter(function(r){return r&&r.some(function(c){return String(c==null?'':c).trim()!=='';});});
   if(!rows.length)return {error:'El archivo no tiene filas.'};
-  var head=rows[0].map(normHead), iD=-1,iN=-1,iA=-1,iAp=-1;
-  head.forEach(function(h,i){if(iD<0&&/(dni|documento|doc)/.test(h))iD=i;else if(iA<0&&/(activo|estado|habilitad|condicion|situacion|vota)/.test(h))iA=i;else if(iAp<0&&/apellido/.test(h))iAp=i;else if(iN<0&&/(nombre|socio)/.test(h))iN=i;});
-  var datos=rows;
-  if(iD<0){ /* sin encabezado: DNI, nombre, activo */
+  /* Busca la fila de títulos (puede no ser la primera: planillas con logo o título arriba). */
+  var hi=-1;for(var x=0;x<Math.min(rows.length,40);x++){if(rows[x].some(function(c){return /^(dni|documento|nro\.? de documento|n° documento|doc\.?)$/.test(normHead(c));})){hi=x;break;}}
+  var iD=-1,iN=-1,iA=-1,iAp=-1,datos=rows;
+  if(hi>=0){
+    var head=rows[hi].map(normHead);
+    head.forEach(function(h,i){
+      if(iD<0&&/^(dni|documento|nro\.? de documento|n° documento|doc\.?)$/.test(h))iD=i;
+      else if(iA<0&&/^(estado|activo|activa|habilitado|habilitada|condicion|vota|puede votar)$/.test(h))iA=i;
+      else if(iAp<0&&/^apellidos?$/.test(h))iAp=i;
+      else if(iN<0&&/^(nombres?|socio|apellido y nombre|nombre y apellido)$/.test(h))iN=i;
+    });
+    datos=rows.slice(hi+1);
+  } else { /* sin encabezado: DNI, nombre, activo */
     iD=0;iN=1;iA=rows[0].length>2?2:-1;
-  } else datos=rows.slice(1);
+  }
   var socios=[],invalidos=[],vistos={},dup=0;
   datos.forEach(function(r,ix){
     var d=String(r[iD]==null?'':r[iD]).replace(/\D/g,'').replace(/^0+/,'');
     var nom=[iAp>=0?r[iAp]:'',iN>=0?r[iN]:''].map(function(x){return String(x==null?'':x).trim();}).filter(Boolean).join(', ');
-    if(!/^\d{6,9}$/.test(d)){invalidos.push((ix+2)+': '+String(r[iD]||'(vacío)'));return;}
+    if(!/^\d{6,12}$/.test(d)){if(d||nom)invalidos.push((nom||'fila '+(ix+hi+2))+': '+String(r[iD]||'(sin DNI)'));return;}
     if(vistos[d]){dup++;}
     vistos[d]=true;
     socios.push({dni:d,nombre:nom,activo:iA>=0?esActivo(r[iA]):true});
@@ -137,7 +146,7 @@ function leerArchivo(f){
     rd.readAsText(f,'utf-8');
   } else {
     if(!window.XLSX){st.previewErr='No se pudo cargar el lector de Excel. Guardá el archivo como CSV y subilo de nuevo.';render();return;}
-    rd.onload=function(){try{var wb=XLSX.read(rd.result,{type:'array'});var ws=wb.Sheets[wb.SheetNames[0]];var rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:false,defval:''});
+    rd.onload=function(){try{var wb=XLSX.read(rd.result,{type:'array'});var rows=null;wb.SheetNames.some(function(n){var rr=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:false,defval:''});if(rr.slice(0,40).some(function(r){return r.some(function(c){return /^(dni|documento)$/.test(normHead(c));});})){rows=rr;st.hoja=n;return true;}return false;});if(!rows){rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:false,defval:''});st.hoja=wb.SheetNames[0];}
       var r=interpretar(rows);if(r.error)st.previewErr=r.error;else st.preview=r;}catch(e){st.previewErr='No se pudo leer el archivo. Probá guardarlo como .xlsx o .csv.';}render();};
     rd.readAsArrayBuffer(f);
   }
@@ -153,7 +162,7 @@ function padronView(){
   if(st.previewErr)h+='<div class="status no" role="alert"><p>'+esc(st.previewErr)+'</p></div>';
   if(p){
     var act=p.socios.filter(function(s){return s.activo;}).length;
-    h+='<div class="status info"><strong>'+p.socios.length+' socios leídos</strong><p>'+act+' activos · '+(p.socios.length-act)+' no activos'+(p.conEstado?'':' (sin columna de estado: todos activos)')+(p.dup?' · '+p.dup+' DNI repetidos (se toma la última fila)':'')+'</p>'+
+    h+='<div class="status info"><strong>'+p.socios.length+' socios leídos'+(st.hoja?' (hoja “'+esc(st.hoja)+'”)':'')+'</strong><p>'+act+' activos · '+(p.socios.length-act)+' no activos'+(p.conEstado?'':' (sin columna de estado: todos activos)')+(p.dup?' · '+p.dup+' DNI repetidos (se toma la última fila)':'')+'</p>'+
     (p.invalidos.length?'<p>Se descartan '+p.invalidos.length+' filas con DNI inválido: '+esc(p.invalidos.slice(0,6).join(' · '))+(p.invalidos.length>6?'…':'')+'</p>':'')+'</div>'+
     '<div class="scroll"><table><thead><tr><th>DNI</th><th>Nombre</th><th>Condición</th></tr></thead><tbody>'+p.socios.slice(0,8).map(function(s){return '<tr><td class="mono">'+esc(s.dni)+'</td><td>'+esc(s.nombre)+'</td><td>'+(s.activo?'Activo':'No activo')+'</td></tr>';}).join('')+'</tbody></table></div>'+
     (p.socios.length>8?'<p class="hint">y '+(p.socios.length-8)+' más.</p>':'')+

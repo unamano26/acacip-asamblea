@@ -34,7 +34,7 @@ const json = (data, status = 200) =>
 const err = (codigo, mensaje, status = 400) => json({ ok: false, codigo, mensaje }, status);
 
 const limpiarDni = (v) => String(v ?? "").replace(/\D/g, "").replace(/^0+/, "");
-const dniValido = (d) => /^\d{6,9}$/.test(d);
+const dniValido = (d) => /^\d{6,12}$/.test(d);
 const rid = () => crypto.randomUUID();
 
 async function leerPadron(s) {
