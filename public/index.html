@@ -30,7 +30,7 @@ function get(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function put(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v);}catch(e){}}
 function toast(t){var el=document.getElementById('toast');el.textContent=t;el.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(function(){el.hidden=true;},2600);}
 function api(path,opts){return fetch('/api/'+path,opts).then(function(r){return r.json().catch(function(){return {ok:false,codigo:'red',mensaje:'Respuesta inválida del servidor.'};}).then(function(j){j._status=r.status;return j;});},function(){return {ok:false,codigo:'red',mensaje:'Sin conexión. Revisá el wifi o los datos e intentá de nuevo.'};});}
-var SINO=[{id:'positivo',texto:'Positivo'},{id:'negativo',texto:'Negativo'},{id:'abstencion',texto:'Abstención'}], LETRA={positivo:'+',negativo:'–',abstencion:'='};
+var SINO=[{id:'positivo',texto:'Sí'},{id:'negativo',texto:'No'}], LETRA={positivo:'✓',negativo:'✕',abstencion:'='};
 function ops(m){return (m.opciones&&m.opciones.length)?m.opciones:SINO;}
 function clase(id){return LETRA[id]?id:'alt';}
 function marca(id,i){return LETRA[id]||String.fromCharCode(65+i);}

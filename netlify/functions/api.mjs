@@ -8,11 +8,10 @@
 import { getStore } from "@netlify/blobs";
 
 const SINO = [
-  { id: "positivo", texto: "Positivo" },
-  { id: "negativo", texto: "Negativo" },
-  { id: "abstencion", texto: "Abstención" },
+  { id: "positivo", texto: "Sí" },
+  { id: "negativo", texto: "No" },
 ];
-// Opciones de una consigna: "sino" (Positivo/Negativo/Abstención) o "opciones"
+// Opciones de una consigna: "sino" (Sí / No) o "opciones"
 // (alternativas propias, p. ej. sedes, con Abstención opcional).
 function opcionesDe(m) {
   if (m.tipo !== "opciones") return SINO;
@@ -262,7 +261,7 @@ async function adminMocionCrear(req, s) {
       publicar: false,
       tipo: esOpc ? "opciones" : "sino",
       opciones: ops,
-      abstencion: esOpc ? abstencion !== false : true,
+      abstencion: esOpc ? abstencion === true : false,
       creada: new Date().toISOString(),
     });
     if (await guardarMociones(s, lista, etag)) return json({ ok: true });

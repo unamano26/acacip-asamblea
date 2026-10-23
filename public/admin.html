@@ -24,7 +24,7 @@
 <script>
 (function(){
 var view=document.getElementById('view'), PK='asamblea-admin';
-var st={hab:{dni:'',nombre:''},asis:null,pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true},editando:null,resetPres:false};
+var st={hab:{dni:'',nombre:''},asis:null,pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:false},editando:null,resetPres:false};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function sget(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}
 function sput(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v);}catch(e){}}
@@ -33,7 +33,7 @@ function api(path,method,body){
   return fetch('/api/admin/'+path,{method:method||'GET',headers:{'content-type':'application/json','x-admin-password':st.pw},body:body?JSON.stringify(body):undefined})
   .then(function(r){return r.json().catch(function(){return {ok:false,mensaje:'Respuesta inválida del servidor.'};}).then(function(j){j._status=r.status;if(r.status===401&&path!=='login'){st.pw='';sput(PK,null);render();}return j;});},function(){return {ok:false,mensaje:'Sin conexión.'};});
 }
-var NOMBRES={positivo:'Positivo',negativo:'Negativo',abstencion:'Abstención'};
+var NOMBRES={positivo:'Sí',negativo:'No',abstencion:'Abstención'};
 function fmtFecha(iso){if(!iso)return '—';var d=new Date(iso);return d.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit'})+' '+d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});}
 
 /* ---------- Acceso ---------- */
@@ -93,7 +93,7 @@ function mocionesView(){
   var h='<form class="card" id="nueva"><h3>Nueva consigna</h3><div class="field"><label for="n-titulo">Consigna a votar</label><input id="n-titulo" placeholder="Ej.: Aprobación de la memoria y balance 2025-2026" value="'+esc(st.nueva.titulo)+'"></div>'+
   '<div class="field"><label for="n-detalle">Detalle (opcional)</label><textarea id="n-detalle" placeholder="Texto que van a leer los socios antes de votar">'+esc(st.nueva.detalle)+'</textarea></div>'+
   '<fieldset class="tipo"><legend class="label" style="margin-bottom:6px">Tipo de votación</legend><div class="row">'+
-  '<label class="btn ghost small"><input type="radio" name="n-tipo" value="sino"'+(st.nueva.tipo==='sino'?' checked':'')+'> Positivo / Negativo / Abstención</label>'+
+  '<label class="btn ghost small"><input type="radio" name="n-tipo" value="sino"'+(st.nueva.tipo==='sino'?' checked':'')+'> Sí / No</label>'+
   '<label class="btn ghost small"><input type="radio" name="n-tipo" value="opciones"'+(st.nueva.tipo==='opciones'?' checked':'')+'> Elegir entre opciones</label></div></fieldset>'+
   (st.nueva.tipo==='opciones'?'<div class="field"><span class="label">Opciones (cada socio elige una)</span>'+st.nueva.opciones.map(function(o,j){return '<div class="row"><input id="n-op-'+j+'" aria-label="Opción '+String.fromCharCode(65+j)+'" placeholder="Opción '+String.fromCharCode(65+j)+(j===0?' · ej.: Córdoba':'')+'" value="'+esc(o)+'" style="flex:1;min-width:0;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 12px">'+(st.nueva.opciones.length>2?'<button type="button" class="btn ghost small" data-quitarop="'+j+'" aria-label="Quitar opción">Quitar</button>':'')+'</div>';}).join('')+
     '<div class="row">'+(st.nueva.opciones.length<8?'<button type="button" class="btn ghost small" data-agregarop="1">+ Agregar opción</button>':'')+'<label class="hint check"><input type="checkbox" id="n-abs"'+(st.nueva.abstencion?' checked':'')+'> Incluir “Abstención”</label></div></div>':'')+
@@ -237,7 +237,7 @@ view.addEventListener('submit',function(e){
   if(e.target.id==='nueva'){var t=st.nueva.titulo.trim();if(!t){toast('Escribí la consigna');return;}
     var nv=st.nueva,ops=nv.opciones.map(function(x){return x.trim();}).filter(Boolean);
     if(nv.tipo==='opciones'&&ops.length<2){toast('Cargá al menos dos opciones');return;}
-    accion(api('mociones','POST',{titulo:t,detalle:nv.detalle,tipo:nv.tipo,opciones:ops,abstencion:nv.abstencion})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:true};render();toast('Consigna agregada');}});return;}
+    accion(api('mociones','POST',{titulo:t,detalle:nv.detalle,tipo:nv.tipo,opciones:ops,abstencion:nv.abstencion})).then(function(r){if(r.ok){st.nueva={titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:false};render();toast('Consigna agregada');}});return;}
   if(e.target.id==='habilitar'){var hd=st.hab.dni.replace(/\D/g,''),hn=st.hab.nombre.trim();if(hd.length<6){toast('Revisá el DNI');return;}habilitar(hd,hn,true);return;}
   if(e.target.id==='buscar'){api('padron/buscar?q='+encodeURIComponent(st.buscar.q)).then(function(r){st.buscar.res=r.ok?r.resultados:[];render();});}
 });
