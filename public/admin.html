@@ -24,7 +24,7 @@
 <script>
 (function(){
 var view=document.getElementById('view'), PK='asamblea-admin';
-var st={hab:{dni:'',nombre:''},asis:null,pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:false},editando:null,resetPres:false};
+var st={cero:false,ceroVotos:true,ceroEnviando:false,hab:{dni:'',nombre:''},asis:null,pw:'',tab:'mociones',resumen:null,cargando:false,loginMsg:'',borrar:null,preview:null,previewErr:'',buscar:{q:'',res:null},nueva:{titulo:'',detalle:'',tipo:'sino',opciones:['','',''],abstencion:false},editando:null,resetPres:false};
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function sget(k){try{return sessionStorage.getItem(k);}catch(e){return null;}}
 function sput(k,v){try{v==null?sessionStorage.removeItem(k):sessionStorage.setItem(k,v);}catch(e){}}
@@ -181,6 +181,14 @@ function padronView(){
   return h;
 }
 
+/* ---------- Empezar de cero ---------- */
+function ceroHtml(){
+  return '<div class="card" style="border-color:var(--neg)"><h3>Empezar de cero</h3>'+
+  '<p>Pone en cero a los <b>logueados</b>: socios habilitados presentes y asistentes sin voto. El padrón y las consignas cargadas no se tocan.</p>'+
+  '<label class="hint check"><input type="checkbox" id="cero-votos"'+(st.ceroVotos?' checked':'')+'> Borrar también todos los votos (las consignas vuelven a borrador)</label>'+
+  '<div class="row"><button class="btn danger" data-cerook="1"'+(st.ceroEnviando?' disabled':'')+'>'+(st.ceroEnviando?'Borrando…':'Sí, poner todo en cero')+'</button><button class="btn ghost" data-cancelar="1">Cancelar</button></div></div>';
+}
+
 /* ---------- Asistencia ---------- */
 function hora(iso){if(!iso)return '—';var d=new Date(iso);return isNaN(d)?'—':d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});}
 function fecha(iso){if(!iso)return '';var d=new Date(iso);return isNaN(d)?'':d.toLocaleDateString('es-AR');}
@@ -217,8 +225,8 @@ function render(){
   if(!st.pw){view.innerHTML=loginView();return;}
   view.innerHTML='<div style="display:flex;flex-direction:column;gap:16px">'+
     '<div class="spread"><div class="tabs" role="tablist"><button class="tab" role="tab" data-tab="mociones" aria-selected="'+(st.tab==='mociones')+'">Consignas y votación</button><button class="tab" role="tab" data-tab="asistencia" aria-selected="'+(st.tab==='asistencia')+'">Asistencia</button><button class="tab" role="tab" data-tab="padron" aria-selected="'+(st.tab==='padron')+'">Padrón</button></div>'+
-    '<div class="row"><a class="btn primary small" href="/pantalla" target="_blank" rel="noopener">Proyectar en pantalla</a><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
-    statsHtml()+(st.tab==='mociones'?mocionesView():st.tab==='asistencia'?asistenciaView():padronView())+'</div>';
+    '<div class="row"><button class="btn danger small" data-cero="1">Empezar de cero</button><a class="btn primary small" href="/pantalla" target="_blank" rel="noopener">Proyectar en pantalla</a><a class="btn ghost small" href="/" target="_blank" rel="noopener">Ver como socio</a><button class="btn ghost small" data-logout="1">Salir</button></div></div>'+
+    (st.cero?ceroHtml():'')+statsHtml()+(st.tab==='mociones'?mocionesView():st.tab==='asistencia'?asistenciaView():padronView())+'</div>';
   if(fid){var el=document.getElementById(fid);if(el){el.focus();try{if(pos!=null)el.setSelectionRange(pos,pos);}catch(e){}}}
 }
 
@@ -253,6 +261,7 @@ document.getElementById('archivo').addEventListener('change',function(e){var f=e
 view.addEventListener('change',function(e){
   if(e.target.name==='n-tipo'){st.nueva.tipo=e.target.value;render();}
   if(e.target.id==='n-abs')st.nueva.abstencion=e.target.checked;
+  if(e.target.id==='cero-votos')st.ceroVotos=e.target.checked;
 });
 view.addEventListener('click',function(e){
   var t=e.target.closest('button');if(!t)return;var d=t.dataset;
@@ -269,7 +278,11 @@ view.addEventListener('click',function(e){
   if(d.mover){accion(api('mociones/'+d.id,'PATCH',{mover:+d.mover}));return;}
   if(d.editar){st.editando=d.editar;render();return;}
   if(d.guardar){var id=d.guardar;accion(api('mociones/'+id,'PATCH',(function(){var b={titulo:document.getElementById('et-'+id).value,detalle:document.getElementById('ed-'+id).value};var eo=document.getElementById('eo-'+id);if(eo)b.opciones=eo.value.split('\n').map(function(x){return x.trim();}).filter(Boolean);return b;})())).then(function(){st.editando=null;render();});return;}
-  if(d.cancelar){st.editando=null;st.borrar=null;st.resetPres=false;render();return;}
+  if(d.cero){st.cero=true;render();return;}
+  if(d.cerook){st.ceroEnviando=true;render();api('reiniciar','POST',{votos:st.ceroVotos}).then(function(r){st.ceroEnviando=false;
+    if(r.ok){st.cero=false;st.asis=null;toast('Listo: '+r.presentes+' presentes y '+r.asistentes+' asistentes borrados'+(st.ceroVotos?', '+r.votos+' votos borrados':''));}
+    else toast(r.mensaje||'No se pudo reiniciar.');cargar();});return;}
+  if(d.cancelar){st.cero=false;st.editando=null;st.borrar=null;st.resetPres=false;render();return;}
   if(d.borrar){st.borrar=d.borrar;render();return;}
   if(d.borrarok){st.borrar=null;accion(api('mociones/'+d.borrarok,'DELETE')).then(function(r){if(r.ok)toast('Consigna eliminada');});return;}
   if(d.csv){csv();return;}

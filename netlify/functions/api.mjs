@@ -134,6 +134,8 @@ async function estado(req, s) {
   const dni = new URL(req.url).searchParams.get("dni");
   const v = await socioActivo(s, dni);
   if (v.error) return v.error;
+  // Un celular que ya tenía la sesión abierta (por ejemplo, de una prueba) vuelve a contar como presente.
+  await marcarPresente(s, v.dni);
   const { lista } = await leerMociones(s);
   // Los socios solo ven la consigna que la mesa habilitó (abierta); nunca resultados.
   const out = [];
@@ -348,6 +350,24 @@ async function adminSocio(req, s) {
   return err("conflicto", "El padrón se modificó al mismo tiempo. Probá de nuevo.", 409);
 }
 
+// Deja la asamblea en cero: borra ingresos y, si se pide, también todos los votos.
+// El padrón y las consignas se conservan (las consignas vuelven a borrador).
+async function adminReiniciar(req, s) {
+  const { votos } = await body(req);
+  const borrar = async (prefix) => { const ks = await contar(s, prefix); await enLotes(ks, (k) => s.delete(k)); return ks.length; };
+  const r = { presentes: await borrar("presentes/"), asistentes: await borrar("asistentes/"), votos: 0 };
+  if (votos) {
+    r.votos = await borrar("boletas/");
+    await borrar("voto-dni/");
+    for (let i = 0; i < 3; i++) {
+      const { lista, etag } = await leerMociones(s);
+      for (const m of lista) m.estado = "borrador";
+      if (await guardarMociones(s, lista, etag)) break;
+    }
+  }
+  return json({ ok: true, ...r });
+}
+
 async function adminReiniciarPresentes(s) {
   for (const k of await contar(s, "asistentes/")) await s.delete(k);
   for (const k of await contar(s, "presentes/")) await s.delete(k);
@@ -372,6 +392,7 @@ export default async (req) => {
       if (path === "admin/padron" && metodo === "PUT") return await adminPadronGuardar(req, s);
       if (path === "admin/padron/buscar" && metodo === "GET") return await adminPadronBuscar(req, s);
       if (path === "admin/presentes" && metodo === "DELETE") return await adminReiniciarPresentes(s);
+      if (path === "admin/reiniciar" && metodo === "POST") return await adminReiniciar(req, s);
       if (path === "admin/asistencia" && metodo === "GET") return await adminAsistencia(s);
       if (path === "admin/socio" && metodo === "POST") return await adminSocio(req, s);
       if (path === "admin/mociones" && metodo === "POST") return await adminMocionCrear(req, s);
