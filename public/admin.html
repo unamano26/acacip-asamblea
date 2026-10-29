@@ -184,8 +184,8 @@ function padronView(){
 /* ---------- Empezar de cero ---------- */
 function ceroHtml(){
   return '<div class="card" style="border-color:var(--neg)"><h3>Empezar de cero</h3>'+
-  '<p>Pone en cero a los <b>logueados</b>: socios habilitados presentes y asistentes sin voto. El padrón y las consignas cargadas no se tocan.</p>'+
-  '<label class="hint check"><input type="checkbox" id="cero-votos"'+(st.ceroVotos?' checked':'')+'> Borrar también todos los votos (las consignas vuelven a borrador)</label>'+
+  '<p>Pone en cero a los <b>logueados</b>: socios habilitados presentes y asistentes sin voto. </p><p class="status ok" style="padding:10px 14px"><b>Las consignas NO se borran</b>, ni el padrón.</p>'+
+  '<label class="hint check"><input type="checkbox" id="cero-votos"'+(st.ceroVotos?' checked':'')+'> Borrar también los votos de prueba (las consignas quedan cargadas, sin votos y sin abrir)</label>'+
   '<div class="row"><button class="btn danger" data-cerook="1"'+(st.ceroEnviando?' disabled':'')+'>'+(st.ceroEnviando?'Borrando…':'Sí, poner todo en cero')+'</button><button class="btn ghost" data-cancelar="1">Cancelar</button></div></div>';
 }
 
